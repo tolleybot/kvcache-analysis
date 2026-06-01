@@ -10,6 +10,8 @@ pkill -9 -f "vllm serve" 2>/dev/null || true
 pkill -9 -f "VLLM::EngineCore" 2>/dev/null || true
 pkill -9 -f "entrypoints.openai" 2>/dev/null || true
 pkill -9 -f "multiprocessing.resource_tracker" 2>/dev/null || true
+# Mooncake Store master (Stage 3). Harmless if not running.
+pkill -9 -f "mooncake_master" 2>/dev/null || true
 
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   used=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits 2>/dev/null | head -1)

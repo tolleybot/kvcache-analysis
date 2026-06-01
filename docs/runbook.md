@@ -95,6 +95,42 @@ The confirmation questions and diagnostic commands for the fabric are in
 `environment-checklist.md`. Without RDMA the Transfer Engine falls back to TCP,
 which works but is not representative.
 
+## Stage 3: Mooncake Store (cross-instance KV reuse)
+
+Two vLLM instances sharing one Mooncake Store pool. Full design, recipe, and the
+measured local proof are in `stage3.md`. The two requirements that gate it:
+
+- **Mooncake wheel must match the host CUDA**, exactly like vLLM. CUDA 13 box:
+  `pip install mooncake-transfer-engine-cuda13`. CUDA 12: the base
+  `mooncake-transfer-engine`. Otherwise the import fails with `libcudart.so.NN`.
+- **`PYTHONHASHSEED` must be identical on every instance** (set in
+  `serve_mooncake.sh`, default 0). vLLM seeds block hashes per process otherwise,
+  so instances never match in the store and cross-instance hits stay at zero.
+
+Local proof (two co-located instances over TCP):
+
+```bash
+.venv/bin/pip install mooncake-transfer-engine-cuda13
+bash scripts/serve_master.sh &
+MODEL=Qwen/Qwen2.5-0.5B-Instruct PORT=8000 BOOTSTRAP_PORT=8998 GPU_MEM_UTIL=0.38 \
+  ENFORCE_EAGER=1 MOONCAKE_CONFIG_PATH=/tmp/mc_a.json bash scripts/serve_mooncake.sh &
+MODEL=Qwen/Qwen2.5-0.5B-Instruct PORT=8001 BOOTSTRAP_PORT=8999 GPU_MEM_UTIL=0.38 \
+  ENFORCE_EAGER=1 MOONCAKE_CONFIG_PATH=/tmp/mc_b.json bash scripts/serve_mooncake.sh &
+.venv/bin/python -m bench.run_xinstance --trace data/trace_xinst.jsonl \
+  --model Qwen/Qwen2.5-0.5B-Instruct --port-a 8000 --port-b 8001 --settle-s 5
+bash scripts/stop_server.sh
+```
+
+Multi-GPU node (one instance per GPU) via Docker Compose:
+
+```bash
+docker build -f docker/Dockerfile --build-arg INSTALL_MOONCAKE=1 -t mloss-vllm-kvcache:mooncake .
+MODEL=Qwen/Qwen2.5-3B-Instruct docker compose -f docker/compose.mooncake.yml up
+```
+
+For the RDMA performance tier, set `MOONCAKE_PROTOCOL=rdma` and `MOONCAKE_DEVICE`
+to the RNIC, and run with host networking and IB device passthrough.
+
 ## Where things are
 
 - `docs/` evaluation rubric, candidate survey, baseline results, this runbook

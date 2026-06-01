@@ -1,0 +1,85 @@
+# Stage 3 topology for a multi-GPU node: a Mooncake Store master plus two vLLM
+# instances (one per GPU) sharing one KV pool over TCP. This is the integration
+# tier; for the RDMA performance tier see docs/runbook.md (needs host networking
+# and InfiniBand device passthrough).
+#
+# Build the image with Mooncake first:
+#   docker build -f docker/Dockerfile --build-arg INSTALL_MOONCAKE=1 -t mloss-vllm-kvcache:mooncake .
+#   MODEL=Qwen/Qwen2.5-3B-Instruct docker compose -f docker/compose.mooncake.yml up
+#
+# Then run the cross-instance test from the host:
+#   .venv/bin/python -m bench.run_xinstance --trace data/trace_xinst.jsonl \
+#     --model "$MODEL" --port-a 8000 --port-b 8001
+
+x-instance-env: &instance-env
+  MODEL: ${MODEL:-Qwen/Qwen2.5-3B-Instruct}
+  MAX_MODEL_LEN: ${MAX_MODEL_LEN:-8192}
+  GPU_MEM_UTIL: ${GPU_MEM_UTIL:-0.85}
+  MASTER_ADDR: master:50051
+  METADATA_SERVER: P2PHANDSHAKE
+  MOONCAKE_PROTOCOL: ${MOONCAKE_PROTOCOL:-tcp}
+  # PYTHONHASHSEED is fixed inside serve_mooncake.sh so both instances agree;
+  # override here only to change it for the whole pool at once.
+
+services:
+  master:
+    image: ${IMAGE:-mloss-vllm-kvcache:mooncake}
+    command: ["-lc", "bash scripts/serve_master.sh"]
+    environment:
+      MASTER_PORT: "50051"
+    ports:
+      - "50051:50051"
+      - "9003:9003"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc 'cat < /dev/null > /dev/tcp/127.0.0.1/50051'"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  instance-a:
+    image: ${IMAGE:-mloss-vllm-kvcache:mooncake}
+    command: ["-lc", "bash scripts/serve_mooncake.sh"]
+    environment:
+      <<: *instance-env
+      PORT: "8000"
+      BOOTSTRAP_PORT: "8998"
+      MOONCAKE_REQUESTER_LOCAL_HOSTNAME: instance-a
+      MOONCAKE_CONFIG_PATH: /tmp/mc_a.json
+    ports:
+      - "8000:8000"
+    volumes:
+      - ${HF_CACHE:-~/.cache/huggingface}:/root/.cache/huggingface
+    depends_on:
+      master:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+
+  instance-b:
+    image: ${IMAGE:-mloss-vllm-kvcache:mooncake}
+    command: ["-lc", "bash scripts/serve_mooncake.sh"]
+    environment:
+      <<: *instance-env
+      PORT: "8001"
+      BOOTSTRAP_PORT: "8999"
+      MOONCAKE_REQUESTER_LOCAL_HOSTNAME: instance-b
+      MOONCAKE_CONFIG_PATH: /tmp/mc_b.json
+    ports:
+      - "8001:8001"
+    volumes:
+      - ${HF_CACHE:-~/.cache/huggingface}:/root/.cache/huggingface
+    depends_on:
+      master:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["1"]
+              capabilities: [gpu]
