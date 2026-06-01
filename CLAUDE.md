@@ -11,6 +11,14 @@ The work runs in two phases:
 
 Do not start prototype work until the report exists and a candidate has been selected.
 
+**Orientation: read `README.md` first, then `docs/`.** `README.md` is the current
+status, the strategy, and the decision log; it is the entry point for picking up
+this work on any machine. `docs/runbook.md` covers how to run anywhere and the
+environment gotchas. As of the latest commit, Stages 0 through 2 are complete and
+the Stage 3 Mooncake Store prototype has proven cross-instance reuse locally; the
+cluster tier is next. The repository is the single source of truth, since tooling
+memory does not travel with a clone.
+
 ## Background: what a KV caching solution is
 
 During transformer inference, the attention mechanism computes a key and a value vector for every token in the context. These key/value tensors are cached so that already-processed tokens are not recomputed on each step. This store is the KV cache. Inference splits into a prefill phase, which computes the KV cache for the whole prompt at once, and a decode phase, which generates one token at a time and reuses the cached KV rather than reprocessing the prompt.
