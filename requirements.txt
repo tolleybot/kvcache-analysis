@@ -1,0 +1,4 @@
+# Runtime dependencies for the benchmark harness.
+# vLLM itself is pinned by the Docker base image tag (see docker/Dockerfile),
+# not here, because its correct CUDA build is host-driver dependent.
+httpx==0.28.1
