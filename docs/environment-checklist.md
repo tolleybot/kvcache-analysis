@@ -7,6 +7,17 @@ it on the way. That path, GPUDirect RDMA over a real fabric, is what makes
 Mooncake's numbers meaningful. Without it the bytes detour through CPU RAM and the
 TCP stack, and the result is a lower bound that must be labelled as such.
 
+## Scope
+
+The immediate target is multi-GPU cross-instance reuse on a single node, one vLLM
+instance per GPU sharing one Store pool. Multi-machine reuse over a cross-node
+RDMA fabric is deferred as future work. The cross-node fabric questions below
+(dedicated fabric, GPUDirect across the network, fabric-local multi-node
+placement) therefore apply to that future phase, not to the current multi-GPU
+work, which runs within one node. The relevant transport question for a single
+node is the intra-node path between GPUs (NVLink, or RDMA loopback over a
+GPU-affined local NIC), not the inter-node fabric.
+
 ## Hardware strategy
 
 Two tiers, used in order.
@@ -15,9 +26,11 @@ Two tiers, used in order.
    mechanical proof that cross-instance hits work. Single node, TCP transport,
    small or quantized models. Numbers from this tier are not representative and
    are always labelled.
-2. **Benchmark tier.** GResearch multi-GPU clusters (V100, H200, and similar).
-   Used only once the prototype works locally. Produces report-grade numbers,
-   and only after this checklist passes on it.
+2. **Benchmark tier.** A multi-GPU node with NVLink between GPUs. Used once the
+   prototype works locally, to produce report-grade numbers. The node now in use
+   is recorded below. For the deferred multi-machine phase this is a fabric-local
+   multi-node allocation, and only then does the cross-node section of this
+   checklist apply.
 
 ### Local development tier, recorded
 
@@ -42,7 +55,41 @@ Implications:
 - CUDA 12.6 maps to the default `mooncake-transfer-engine` package, the CUDA < 13
   build, not the `-cuda13` or `-non-cuda` variants.
 
-## Questions for the benchmark cluster, by owner
+### Benchmark tier, recorded
+
+Captured on host `latpoc51`, the multi-GPU node now in use:
+
+| Property | Value |
+| --- | --- |
+| GPU | 8x NVIDIA A100-SXM4-80GB |
+| Compute capability | 8.0 (Ampere) |
+| GPU interconnect | NVLink, fully connected (NV12 between every GPU pair) |
+| Driver | 570.86.15 |
+| CUDA (driver max) | 12.8 |
+| CPU / RAM | 2x AMD EPYC 7542 (128 threads), 2 TB RAM, 4 NUMA nodes |
+| RDMA NIC | ConnectX-6, four IB ports Active at 200 Gb (mlx5_0/2/4/10), MLNX_OFED 25.01 |
+| GPU-to-NIC affinity | PXB-local NIC pair per GPU pair (GPU0/1 to mlx5_0/1, GPU2/3 to mlx5_2/3, GPU4/5 to mlx5_4/5, GPU6/7 to mlx5_10/11) |
+| GPUDirect module | `nvidia_peermem` not loaded (only `nvidia_fs`); see note below |
+| Other | Kubernetes node; Docker 28.4 with NVIDIA Container Toolkit 1.17.7; perftest present |
+
+Implications:
+
+- This single node satisfies the multi-GPU scope on its own. Run one vLLM
+  instance per A100 sharing one Store pool, with a real model (80 GB per GPU
+  allows far more than the 3B baseline).
+- CUDA 12.8 maps to the default `mooncake-transfer-engine` wheel (CUDA < 13) and a
+  cu12x vLLM build, the opposite of the RTX 5070 dev box.
+- `nvidia_peermem` is not loaded. It only matters if the intra-node transport is
+  RDMA and we want GPUDirect (NIC DMA straight to and from GPU memory) rather than
+  a CPU bounce. The NVLink path between GPUs does not need it. Load it with
+  `modprobe nvidia_peermem` (needs privilege) only if measuring RDMA on-node.
+- The dedicated InfiniBand fabric here is what a future multi-machine phase would
+  use; it is not required for the current single-node multi-GPU work.
+
+## Questions for the deferred multi-machine phase, by owner
+
+These confirm a cross-node RDMA fabric and apply only to the deferred
+multi-machine phase, not to the current single-node multi-GPU work.
 
 ### HPC, fabric, and platform team
 

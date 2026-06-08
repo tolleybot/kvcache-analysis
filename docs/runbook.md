@@ -49,6 +49,7 @@ Version" is the maximum the driver supports).
 
 | Hardware | Arch | Notes |
 | --- | --- | --- |
+| 8x A100-SXM4-80GB (`latpoc51`, benchmark tier in use) | Ampere sm_80 | Driver 570, CUDA 12.8. Use a cu12x vLLM build and the base `mooncake-transfer-engine` wheel (not `-cuda13`). No FlashInfer workaround needed. |
 | RTX 5070 (local dev) | Blackwell sm_120 | Needs CUDA 13 (driver 595 here). Requires the FlashInfer sampler workaround below. |
 | V100 (cluster) | Volta sm_70 | Broadly supported; older drivers may need a CUDA 12.x image tag. |
 | H200 (cluster) | Hopper sm_90 | Well supported; match the tag to the node driver. |
@@ -79,21 +80,31 @@ and image so they apply everywhere harmlessly.
   `vllm:external_prefix_cache_*`, which is where cross-instance hits surface in
   the Stage 3 prototype.
 
-## RDMA on the cluster (Stage 3 performance tier)
+## Transport for the multi-GPU tier (Stage 3 performance)
 
-For representative numbers, run on an RDMA fabric and pass the devices into the
-container:
+Scope is a single node, one vLLM instance per GPU sharing one Store pool, so the
+transport is the intra-node path between GPUs, not a cross-node fabric. The local
+proof used TCP, which works but is not representative. For representative numbers
+use one of:
 
-```bash
-RDMA=1 bash docker/run-server.sh
-```
+- **NVLink**, the natural fast path between GPUs on one node (the A100 box is
+  fully NV12-connected). No NIC involved.
+- **RDMA loopback** over a GPU-affined local NIC. Set `MOONCAKE_PROTOCOL=rdma`
+  and `MOONCAKE_DEVICE` to the RNIC (e.g. `mlx5_4` for a GPU4/5 pair), and pass
+  the devices into the container:
 
-This adds `--network host --cap-add=IPC_LOCK --ulimit memlock=-1
---device=/dev/infiniband`. It requires the host to have OFED/rdma-core and the IB
-kernel modules loaded, and the container's user-space RDMA libraries to match.
-The confirmation questions and diagnostic commands for the fabric are in
-`environment-checklist.md`. Without RDMA the Transfer Engine falls back to TCP,
-which works but is not representative.
+  ```bash
+  RDMA=1 bash docker/run-server.sh
+  ```
+
+  This adds `--network host --cap-add=IPC_LOCK --ulimit memlock=-1
+  --device=/dev/infiniband`. It needs the host's OFED/rdma-core and IB kernel
+  modules, the container's user-space RDMA libraries to match, and
+  `nvidia_peermem` loaded if you want GPUDirect (NIC DMA straight to and from GPU
+  memory) rather than a CPU bounce.
+
+Multi-machine reuse over the cross-node InfiniBand fabric is deferred as future
+work; the cross-node confirmation questions are in `environment-checklist.md`.
 
 ## Stage 3: Mooncake Store (cross-instance KV reuse)
 

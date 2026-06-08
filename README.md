@@ -21,7 +21,7 @@ Detailed material lives in `docs/`; this file links into it.
 | 1 | Sourced survey and comparison of candidates | Done (`docs/survey.md`) |
 | 2 | Baseline benchmark of native vLLM caching | Done (`docs/baseline.md`) |
 | 3 | Mooncake Store prototype, cross-instance reuse | Proven locally (`docs/stage3.md`) |
-| 3+ | Cluster tier: RDMA, multi-GPU, representative numbers | Next |
+| 3+ | Multi-GPU tier: one vLLM instance per GPU on one node, representative numbers | Next |
 
 ## Strategy
 
@@ -43,7 +43,7 @@ jumping straight to benchmarking. Each stage produces an artifact and a decision
    reuse with measured numbers.
 
 Hardware strategy is local-first: prove correctness and integration cheaply on a
-local box, then move to the cluster only for representative performance. The
+local box, then move to the benchmark node only for representative performance. The
 project is containerized so the same setup runs on any machine; see
 `docs/runbook.md`.
 
@@ -71,6 +71,11 @@ project is containerized so the same setup runs on any machine; see
   hardware. Because tooling memory does not travel with a clone, durable
   environment facts and run instructions live in the repo (`docs/runbook.md`),
   not anywhere machine-local.
+- **Scope: multi-GPU on a single node, not multi-machine.** The team this work
+  is for cares about cross-instance KV reuse across GPUs on one machine, so the
+  prototype runs one vLLM instance per GPU sharing one Store pool. Multi-machine
+  reuse over a cross-node RDMA fabric is deferred as future work, which takes the
+  cross-node fabric and GPUDirect-across-network concerns off the critical path.
 
 ## Results so far
 
@@ -123,10 +128,17 @@ bash docker/run-bench.sh         # baseline sweep
 
 ## Continuing the work
 
-The next step is the cluster tier: run on at least two GPUs with one instance per
-GPU and a real model over RDMA, to get representative time to first token and
-throughput against the Stage 2 baseline, then exercise the reliability gates
-(master or peer failure degrading to recompute). The prototype is ready for this:
-`git clone`, then build with `--build-arg INSTALL_MOONCAKE=1` and bring up
-`docker/compose.mooncake.yml`. Confirm the RDMA fabric first using
-`docs/environment-checklist.md`.
+The next step is the multi-GPU tier, and the scope is deliberately single node.
+Run at least two vLLM instances, one pinned per GPU, sharing one Mooncake Store
+pool with a real model (the 3B baseline or larger), to get representative time to
+first token and throughput against the Stage 2 baseline, then exercise the
+reliability gates (master or peer failure degrading to recompute). The prototype
+is ready for this: build with `--build-arg INSTALL_MOONCAKE=1` and bring up
+`docker/compose.mooncake.yml`, which already places one instance per GPU.
+
+This now runs on a benchmark-tier node (8x NVIDIA A100-SXM4-80GB, fully
+NVLink-connected, CUDA 12.8; recorded in `docs/environment-checklist.md`), so the
+multi-GPU prototype no longer needs separate hardware. The install path is the
+CUDA 12 wheels on this box (the base `mooncake-transfer-engine`, not `-cuda13`).
+Multi-machine reuse over the cross-node InfiniBand fabric is out of scope for now
+and is recorded as future work.

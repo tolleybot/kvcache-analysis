@@ -84,7 +84,7 @@ Two configurations isolate the effect of cache capacity:
    output tokens, and concurrency 1, total latency is dominated by decode, not
    prefill, so the prefill savings show up in TTFT rather than tokens per second.
    On larger models, longer prompts, and higher concurrency the throughput effect
-   grows; that regime is for the cluster tier.
+   grows; that regime is for the multi-GPU tier.
 
 The headline for the project: the gap between B2 and B1 is the prize. A larger
 shared cache recovers the evicted hits, and a distributed pool is how a cluster

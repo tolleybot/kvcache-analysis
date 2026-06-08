@@ -9,7 +9,9 @@ prefix caching (Stage 2 baseline) cannot provide.
 This is option (b) from the survey: full Mooncake Store via the vLLM
 `KVConnector`, chosen as the first prototype for its directness and clean
 attribution. It was validated over TCP on a single GPU as a mechanical proof.
-Representative performance numbers require the RDMA cluster tier.
+Representative performance numbers require the multi-GPU tier: one instance per
+GPU on a single node, which is the scope the team cares about (multi-machine
+reuse is deferred).
 
 ## Architecture
 
@@ -120,20 +122,31 @@ shows zero external queries, which is the control.
 | B external queries (blocks) | 2,912 |
 | B local hit rate | 58.4% (within-instance, phase 2) |
 | Model | Qwen2.5-0.5B-Instruct |
-| Transport | TCP (not representative; RDMA is the cluster tier) |
+| Transport | TCP (not representative; NVLink or RDMA is the multi-GPU tier) |
 | KV bytes written by A to store | ~28 MB over 11 puts |
 
 The hit rate is the correctness signal, not a performance claim. Absolute
 latencies are meaningless on TCP with a co-located pair; the point proven is that
 the wiring is correct and a prefix crosses the instance boundary.
 
-## What is left for the cluster tier
+## What is left for the multi-GPU tier
+
+Scope is a single node, one vLLM instance per GPU sharing one Store pool. The
+benchmark-tier node is now an 8x A100 box (`environment-checklist.md`), so this
+runs without separate hardware. `docker/compose.mooncake.yml` already pins one
+instance per GPU.
 
 - Run on >=2 GPUs (one instance per GPU) instead of co-located, with a real model
-  (the 3B baseline model or larger).
-- Switch `protocol` to `rdma` and set `device_name` to the RNIC, after the RDMA
-  fabric is confirmed (`environment-checklist.md`).
+  (the 3B baseline model or larger; 80 GB per A100 allows much larger).
+- Choose the intra-node transport. NVLink (the GPUs are fully NV12-connected) is
+  the natural fast path between instances on one node; the alternative is `rdma`
+  loopback over a GPU-affined local NIC, which wants `nvidia_peermem` loaded for
+  GPUDirect. Both avoid the TCP bounce used in the local proof. The cross-node
+  fabric is not involved at this scope.
 - Measure representative TTFT and throughput with the cross-instance hit rate, and
   compare against the Stage 2 baseline to quantify the gain.
 - Exercise the reliability gates from the rubric: behavior when the master or a
   peer instance goes away (degrade to recompute).
+
+Multi-machine reuse over the cross-node InfiniBand fabric is deferred as future
+work.
