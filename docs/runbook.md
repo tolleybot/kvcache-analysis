@@ -132,12 +132,43 @@ MODEL=Qwen/Qwen2.5-0.5B-Instruct PORT=8001 BOOTSTRAP_PORT=8999 GPU_MEM_UTIL=0.38
 bash scripts/stop_server.sh
 ```
 
-Multi-GPU node (one instance per GPU) via Docker Compose:
+Multi-GPU node, one instance per GPU, via Docker Compose. This is exactly how the
+multi-GPU cross-instance result in `report.md` and `stage3.md` was produced (8x
+A100, instances on GPU 0 and GPU 1, TCP transport).
 
 ```bash
-docker build -f docker/Dockerfile --build-arg INSTALL_MOONCAKE=1 -t mloss-vllm-kvcache:mooncake .
-MODEL=Qwen/Qwen2.5-3B-Instruct docker compose -f docker/compose.mooncake.yml up
+# 1. Build the Mooncake-enabled image. The stock CUDA 13 image runs on this
+#    CUDA 12.8 driver via forward compatibility, so no tag override is needed, and
+#    the base mooncake-transfer-engine wheel works alongside it.
+docker build -f docker/Dockerfile --build-arg INSTALL_MOONCAKE=1 \
+  -t mloss-vllm-kvcache:mooncake .
+
+# 2. Bring up the master plus one instance per GPU (instance-a on GPU 0 -> :8000,
+#    instance-b on GPU 1 -> :8001). Detached, so the same shell drives the test.
+IMAGE=mloss-vllm-kvcache:mooncake MODEL=Qwen/Qwen2.5-3B-Instruct \
+  docker compose -f docker/compose.mooncake.yml up -d
+
+# 3. Wait for both instances to report healthy.
+until curl -sf localhost:8000/health && curl -sf localhost:8001/health; do sleep 5; done
+
+# 4. Run the cross-instance test in a client container on the host network. No
+#    host virtualenv is needed: the image carries bench/ and its deps. The tools
+#    are python3, not python. Results persist to bench/results/ on the host.
+docker run --rm --network host -v "$(pwd)/bench/results:/app/bench/results" \
+  mloss-vllm-kvcache:mooncake -lc '
+    python3 -m bench.trace --num-sessions 8 --turns-per-session 2 \
+      --shared-system-fraction 0.5 --system-words 300 --out /tmp/trace_xinst.jsonl
+    python3 -m bench.run_xinstance --trace /tmp/trace_xinst.jsonl \
+      --model Qwen/Qwen2.5-3B-Instruct --port-a 8000 --port-b 8001 --settle-s 5 \
+      --out /app/bench/results/xinstance_a100_tcp.json'
+
+# 5. Tear down and free the GPUs.
+docker compose -f docker/compose.mooncake.yml down
 ```
+
+`run_xinstance.py` populates the pool from instance A, then serves the same
+prompts from instance B and reports B's external (cross-instance) hit rate. The
+recorded run reached 96.7% external hits over TCP on two A100s.
 
 For the RDMA performance tier, set `MOONCAKE_PROTOCOL=rdma` and `MOONCAKE_DEVICE`
 to the RNIC, and run with host networking and IB device passthrough.

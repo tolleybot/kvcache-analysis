@@ -7,9 +7,12 @@
 #   docker build -f docker/Dockerfile --build-arg INSTALL_MOONCAKE=1 -t mloss-vllm-kvcache:mooncake .
 #   MODEL=Qwen/Qwen2.5-3B-Instruct docker compose -f docker/compose.mooncake.yml up
 #
-# Then run the cross-instance test from the host:
-#   .venv/bin/python -m bench.run_xinstance --trace data/trace_xinst.jsonl \
-#     --model "$MODEL" --port-a 8000 --port-b 8001
+# Then run the cross-instance test in a client container on the host network (no
+# host virtualenv needed; the image carries bench/ and its deps, tools are
+# python3). See docs/runbook.md for the full recipe:
+#   docker run --rm --network host -v "$PWD/bench/results:/app/bench/results" \
+#     mloss-vllm-kvcache:mooncake -lc 'python3 -m bench.run_xinstance \
+#     --trace /tmp/trace_xinst.jsonl --model "$MODEL" --port-a 8000 --port-b 8001'
 
 x-instance-env: &instance-env
   MODEL: ${MODEL:-Qwen/Qwen2.5-3B-Instruct}

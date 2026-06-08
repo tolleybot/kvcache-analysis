@@ -1,17 +1,19 @@
 # Stage 3: Mooncake Store Prototype (Cross-Instance KV Reuse)
 
-Status: the integration works and cross-instance reuse is proven on the local
-development box. Two vLLM instances sharing one Mooncake Store pool achieved a
-**96.7% external (cross-instance) cache hit rate** on instance B for prefixes
-computed by instance A. This is the distributed value that single-instance
-prefix caching (Stage 2 baseline) cannot provide.
+Status: the integration works and cross-instance reuse is proven, first on the
+local development box (two co-located instances on one GPU) and then on the
+benchmark node (two instances, one per GPU, on an 8x A100 box). Both runs reached
+a **96.7% external (cross-instance) cache hit rate** on instance B for prefixes
+computed by instance A. This is the distributed value that single-instance prefix
+caching (Stage 2 baseline) cannot provide. The exact Docker recipe for the
+multi-GPU run is in `runbook.md`, and the result is recorded in `report.md`.
 
 This is option (b) from the survey: full Mooncake Store via the vLLM
 `KVConnector`, chosen as the first prototype for its directness and clean
-attribution. It was validated over TCP on a single GPU as a mechanical proof.
-Representative performance numbers require the multi-GPU tier: one instance per
-GPU on a single node, which is the scope the team cares about (multi-machine
-reuse is deferred).
+attribution. It was validated over TCP, first co-located on one GPU and then
+across two separate GPUs, as a mechanical proof. Representative performance
+numbers still require switching the multi-GPU run off TCP to NVLink or RDMA; the
+scope is single-node multi-GPU and multi-machine reuse is deferred.
 
 ## Architecture
 
@@ -131,18 +133,16 @@ the wiring is correct and a prefix crosses the instance boundary.
 
 ## What is left for the multi-GPU tier
 
-Scope is a single node, one vLLM instance per GPU sharing one Store pool. The
-benchmark-tier node is now an 8x A100 box (`environment-checklist.md`), so this
-runs without separate hardware. `docker/compose.mooncake.yml` already pins one
-instance per GPU.
+Scope is a single node, one vLLM instance per GPU sharing one Store pool, on the
+8x A100 benchmark node (`environment-checklist.md`). The cross-instance run itself
+is done: instances on GPU 0 and GPU 1 over TCP reached the 96.7% external hit rate
+above, with the exact Docker recipe in `runbook.md`. What remains turns that into
+a report-grade performance result:
 
-- Run on >=2 GPUs (one instance per GPU) instead of co-located, with a real model
-  (the 3B baseline model or larger; 80 GB per A100 allows much larger).
-- Choose the intra-node transport. NVLink (the GPUs are fully NV12-connected) is
-  the natural fast path between instances on one node; the alternative is `rdma`
+- Switch the pool off TCP. NVLink (the GPUs are fully NV12-connected) is the
+  natural fast path between instances on one node; the alternative is `rdma`
   loopback over a GPU-affined local NIC, which wants `nvidia_peermem` loaded for
-  GPUDirect. Both avoid the TCP bounce used in the local proof. The cross-node
-  fabric is not involved at this scope.
+  GPUDirect. The cross-node fabric is not involved at this scope.
 - Measure representative TTFT and throughput with the cross-instance hit rate, and
   compare against the Stage 2 baseline to quantify the gain.
 - Exercise the reliability gates from the rubric: behavior when the master or a
