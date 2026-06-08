@@ -128,6 +128,17 @@ latency target, and end to end latency at p50, p95, and p99.
 
 ## 5. Candidates and comparison
 
+**Provenance.** The comparison in this section is compiled from external sources,
+the projects' own documentation, pull requests, design docs, and community posts,
+then fact-checked against primary sources (the method and full source list are in
+`docs/survey.md`). It is not original benchmark data produced for this report. Of
+the candidates, only Mooncake Store has been run on our own hardware (Section 6.2),
+and only over TCP; LMCache, FlexKV, and NIXL are scored from their documentation,
+not measured here. Vendor performance figures are flagged where they appear and
+are not independently reproduced. The only numbers in this report that we measured
+ourselves are the baseline (Section 6.1) and the cross-instance prototype
+(Section 6.2).
+
 Profiles are condensed; the sourced detail and the fact-checking method are in
 `docs/survey.md`.
 
