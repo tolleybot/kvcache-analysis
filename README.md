@@ -137,8 +137,10 @@ is ready for this: build with `--build-arg INSTALL_MOONCAKE=1` and bring up
 `docker/compose.mooncake.yml`, which already places one instance per GPU.
 
 This now runs on a benchmark-tier node (8x NVIDIA A100-SXM4-80GB, fully
-NVLink-connected, CUDA 12.8; recorded in `docs/environment-checklist.md`), so the
-multi-GPU prototype no longer needs separate hardware. The install path is the
-CUDA 12 wheels on this box (the base `mooncake-transfer-engine`, not `-cuda13`).
+NVLink-connected; recorded in `docs/environment-checklist.md`), so the multi-GPU
+prototype no longer needs separate hardware. The stock vLLM v0.22.0 image runs
+as-is here: its CUDA 13 build works on the box's CUDA 12.8 driver through CUDA
+forward compatibility, verified by a kernel launch, so no image tag override is
+needed and the base `mooncake-transfer-engine` wheel works alongside it.
 Multi-machine reuse over the cross-node InfiniBand fabric is out of scope for now
 and is recorded as future work.

@@ -77,8 +77,11 @@ Implications:
 - This single node satisfies the multi-GPU scope on its own. Run one vLLM
   instance per A100 sharing one Store pool, with a real model (80 GB per GPU
   allows far more than the 3B baseline).
-- CUDA 12.8 maps to the default `mooncake-transfer-engine` wheel (CUDA < 13) and a
-  cu12x vLLM build, the opposite of the RTX 5070 dev box.
+- `nvidia-smi` reports max CUDA 12.8, but the stock vLLM `v0.22.0` image ships a
+  CUDA 13 (`cu130`) torch build and runs here through CUDA forward compatibility
+  on the A100, verified by a kernel launch. So the default image needs no tag
+  override, and the base `mooncake-transfer-engine` wheel (not `-cuda13`) works
+  alongside it.
 - `nvidia_peermem` is not loaded. It only matters if the intra-node transport is
   RDMA and we want GPUDirect (NIC DMA straight to and from GPU memory) rather than
   a CPU bounce. The NVLink path between GPUs does not need it. Load it with

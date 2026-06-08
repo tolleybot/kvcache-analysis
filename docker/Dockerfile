@@ -32,6 +32,12 @@ RUN if [ "$INSTALL_MOONCAKE" = "1" ]; then \
         pip install --no-cache-dir mooncake-transfer-engine; \
     fi
 
+# The serve scripts default *_BIN to .venv paths for the host-virtualenv flow.
+# In the container the tools are on PATH, so point the master binary there, the
+# same way VLLM_BIN is set above. Placed after the installs so the pip layers
+# stay cached on rebuild.
+ENV MASTER_BIN=mooncake_master
+
 COPY . .
 
 # The vLLM base sets ENTRYPOINT to `vllm serve`; we drive it through our own

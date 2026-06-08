@@ -49,7 +49,7 @@ Version" is the maximum the driver supports).
 
 | Hardware | Arch | Notes |
 | --- | --- | --- |
-| 8x A100-SXM4-80GB (`latpoc51`, benchmark tier in use) | Ampere sm_80 | Driver 570, CUDA 12.8. Use a cu12x vLLM build and the base `mooncake-transfer-engine` wheel (not `-cuda13`). No FlashInfer workaround needed. |
+| 8x A100-SXM4-80GB (`latpoc51`, benchmark tier in use) | Ampere sm_80 | Driver 570 (max CUDA 12.8). The stock `v0.22.0` image (CUDA 13 build) runs as-is through CUDA forward compatibility, verified by a kernel launch, so no tag override is needed. The base `mooncake-transfer-engine` wheel works. No FlashInfer workaround needed. |
 | RTX 5070 (local dev) | Blackwell sm_120 | Needs CUDA 13 (driver 595 here). Requires the FlashInfer sampler workaround below. |
 | V100 (cluster) | Volta sm_70 | Broadly supported; older drivers may need a CUDA 12.x image tag. |
 | H200 (cluster) | Hopper sm_90 | Well supported; match the tag to the node driver. |
