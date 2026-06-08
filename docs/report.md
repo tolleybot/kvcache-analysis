@@ -260,10 +260,54 @@ in the shared store, leaving the external hit rate at zero with no error. Second
 the CUDA build of both vLLM and Mooncake must be compatible with the host driver.
 Both are baked into the launch scripts and the container image.
 
-The hit rate is the correctness signal, not a performance claim. The latencies on
-TCP with a small model are not representative; NVLink or RDMA transport and a
-larger model under real concurrency are what turn this into a report-grade
-performance comparison.
+The hit rate is the correctness signal, not a performance claim. Section 6.3 makes
+that distinction concrete: over TCP the reuse is real but slower than recomputing.
+
+### 6.3 Does the distributed cache lower latency over TCP? Not here
+
+A high hit rate proves reuse happens; it does not prove reuse is faster than
+recomputing. A controlled comparison on the A100 node makes the difference
+concrete. Using 24 sessions with distinct, long system prompts (so no instance can
+reuse anything locally), instance A served every prompt first with an empty pool,
+which is the cold full-prefill control, and instance B then served the same prompts
+from the now-populated pool.
+
+| Instance | Role | External hit rate | TTFT p50 | TTFT mean |
+| --- | --- | --- | --- | --- |
+| A | cold, full prefill | 0.0% | 38.9 ms | 75 ms |
+| B | pooled, cache hit | 98.3% | 1,843 ms | 2,085 ms |
+
+B reused 98.3% of A's KV with zero transfer failures, yet its time to first token
+was roughly 47 times worse. The cause is the transport: B's measured KV load
+averaged about 3.3 seconds for tens of megabytes, an effective rate near 16 MB/s,
+which is far slower than recomputing a roughly 520-token prefix on an A100 (about
+39 ms).
+
+This is the central caveat stated as a measurement. A cache helps only when
+fetching cached KV is cheaper than recomputing it. On a fast GPU with a small model
+and TCP transport, that inequality is inverted, so the distributed cache is a net
+latency loss. It flips in favour of the cache on two axes, both of which this run
+deliberately sits on the wrong side of:
+
+- **Cheap fetch.** NVLink or RDMA, the transports the Mooncake Transfer Engine
+  exists to use, move KV at GPU-interconnect or fabric speeds rather than ~16 MB/s.
+  This is the deferred next step, and it is what makes the fetch competitive.
+- **Expensive recompute.** Much larger models, much longer contexts, or capacity
+  pressure where the local alternative is eviction and a cascade of misses rather
+  than a cheap prefill (the regime Section 6.1 isolates). When recompute is slow,
+  even a moderate-speed fetch wins.
+
+A separate run with longer prefixes (about 3,300 tokens, roughly 120 MB of KV each)
+exposed a hard ceiling on the TCP path: large transfers exhausted ephemeral TCP
+ports ("cannot assign requested address"), transfers failed, the external hit rate
+fell to about 15%, and tail TTFT rose to 14 to 17 seconds. TCP is adequate to prove
+the mechanism on small prefixes and inadequate for anything larger, which is the
+operational reason RDMA is not optional for a real deployment.
+
+The honest conclusion: the prototype proves cross-instance reuse is correct, and it
+proves that over TCP that reuse does not pay for itself. No cross-instance
+performance gain is claimed from this tier; demonstrating one is exactly what the
+NVLink or RDMA step in Section 7 is for.
 
 ## 7. Recommendation and roadmap
 

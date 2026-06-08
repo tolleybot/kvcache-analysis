@@ -167,8 +167,23 @@ docker compose -f docker/compose.mooncake.yml down
 ```
 
 `run_xinstance.py` populates the pool from instance A, then serves the same
-prompts from instance B and reports B's external (cross-instance) hit rate. The
-recorded run reached 96.7% external hits over TCP on two A100s.
+prompts from instance B and reports B's external (cross-instance) hit rate, plus
+A's own (cold) latency as the recompute control. The recorded run reached 96.7%
+external hits over TCP on two A100s.
+
+Two transport notes from running this, both pointing at RDMA (see `report.md`
+Section 6.3):
+
+- **Pool size.** The default 1 GiB segment is too small for long prefixes; a few
+  thousand tokens of KV per request can exceed it and force store eviction, which
+  shows up as a low hit rate. Raise it with `SEGMENT_SIZE` and `BUFFER_SIZE`
+  (bytes), for example `SEGMENT_SIZE=8589934592 BUFFER_SIZE=2147483648 docker
+  compose -f docker/compose.mooncake.yml up -d`.
+- **TCP ceiling.** TCP transport measured near 16 MB/s here, so a cross-instance
+  load can cost seconds and is slower than recomputing on a fast GPU. Large
+  prefixes (around 3,300 tokens, roughly 120 MB of KV) also exhaust ephemeral TCP
+  ports and the transfers fail. TCP is fine to prove the mechanism on small
+  prefixes; representative performance needs `MOONCAKE_PROTOCOL=rdma`.
 
 For the RDMA performance tier, set `MOONCAKE_PROTOCOL=rdma` and `MOONCAKE_DEVICE`
 to the RNIC, and run with host networking and IB device passthrough.

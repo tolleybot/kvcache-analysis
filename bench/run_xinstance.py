@@ -69,10 +69,15 @@ def send_all(base_url: str, model: str, trace: list[dict], tag: str) -> list:
     return results
 
 
-def run(trace: list[dict], model: str, a_url: str, b_url: str, b_metrics: str,
-        settle_s: float) -> dict:
-    # Phase 1: populate the shared store from instance A.
+def run(trace: list[dict], model: str, a_url: str, a_metrics: str, b_url: str,
+        b_metrics: str, settle_s: float) -> dict:
+    # Phase 1: populate the shared store from instance A. A starts with an empty
+    # pool, so A serves every prompt by full prefill and its external hit rate is
+    # ~0. A's latency is therefore the cold, no-reuse control for B's pooled
+    # latency measured in phase 2, on the same trace and matched hardware.
+    a_before = scrape(a_metrics)
     a_results = send_all(a_url, model, trace, "A")
+    a_after = scrape(a_metrics)
 
     # Let asynchronous store writes settle before reading from B.
     time.sleep(settle_s)
@@ -82,11 +87,14 @@ def run(trace: list[dict], model: str, a_url: str, b_url: str, b_metrics: str,
     b_results = send_all(b_url, model, trace, "B")
     after = scrape(b_metrics)
 
+    a_ok = [r for r in a_results if r.ok]
     b_ok = [r for r in b_results if r.ok]
     metrics = {
         "requests": len(trace),
-        "a_requests_ok": sum(1 for r in a_results if r.ok),
+        "a_requests_ok": len(a_ok),
         "b_requests_ok": len(b_ok),
+        "a_external_hit_rate": hit_rate(a_before, a_after, "ext_queries", "ext_hits"),
+        "a_local_hit_rate": hit_rate(a_before, a_after, "local_queries", "local_hits"),
         "b_external_hit_rate": hit_rate(before, after, "ext_queries", "ext_hits"),
         "b_local_hit_rate": hit_rate(before, after, "local_queries", "local_hits"),
         "b_external_queries": (
@@ -95,7 +103,9 @@ def run(trace: list[dict], model: str, a_url: str, b_url: str, b_metrics: str,
         ),
         "settle_s": settle_s,
     }
+    metrics.update(summarize("a_ttft", [r.ttft_s for r in a_ok]))
     metrics.update(summarize("b_ttft", [r.ttft_s for r in b_ok]))
+    metrics.update(summarize("a_e2e", [r.e2e_s for r in a_ok]))
     metrics.update(summarize("b_e2e", [r.e2e_s for r in b_ok]))
 
     if before["ext_queries"] is None:
@@ -120,12 +130,14 @@ def main() -> None:
 
     a_url = f"http://{args.host_a}:{args.port_a}"
     b_url = f"http://{args.host_b}:{args.port_b}"
+    a_metrics = f"{a_url}/metrics"
     b_metrics = f"{b_url}/metrics"
 
     metrics = run(
         trace=load_trace(args.trace),
         model=args.model,
         a_url=a_url,
+        a_metrics=a_metrics,
         b_url=b_url,
         b_metrics=b_metrics,
         settle_s=args.settle_s,

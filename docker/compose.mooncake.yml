@@ -21,6 +21,11 @@ x-instance-env: &instance-env
   MASTER_ADDR: master:50051
   METADATA_SERVER: P2PHANDSHAKE
   MOONCAKE_PROTOCOL: ${MOONCAKE_PROTOCOL:-tcp}
+  # Per-instance pool segment and local transfer buffer, in bytes. The default
+  # 1 GiB segment is too small for long prefixes (a few thousand tokens of KV per
+  # request can exceed it and force store eviction); raise it for those workloads.
+  SEGMENT_SIZE: ${SEGMENT_SIZE:-1073741824}
+  BUFFER_SIZE: ${BUFFER_SIZE:-1073741824}
   # PYTHONHASHSEED is fixed inside serve_mooncake.sh so both instances agree;
   # override here only to change it for the whole pool at once.
 
