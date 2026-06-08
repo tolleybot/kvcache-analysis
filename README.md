@@ -115,6 +115,7 @@ bash docker/run-bench.sh         # baseline sweep
 
 ## Repository map
 
+- `docs/report.md` the consolidated standalone report: investigation, comparison, and recommendation in one document
 - `docs/evaluation-rubric.md` the Stage 0 success definition and weighted rubric
 - `docs/environment-checklist.md` RDMA fabric questions and diagnostic commands
 - `docs/survey.md` the sourced candidate comparison and recommendation
