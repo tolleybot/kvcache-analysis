@@ -87,6 +87,10 @@ Implications:
   `nvlink_intra` at init), so beating TCP means RDMA, and RDMA wants GPUDirect (NIC
   DMA straight to and from GPU memory) rather than a CPU bounce. Load it with
   `modprobe nvidia_peermem` (needs privilege) before measuring RDMA on-node.
+- NVLink P2P is validated on this box at about 270 GB/s GPU-to-GPU
+  (`scripts/check_nvlink_p2p.py`). The `nvlink_intra` rejection noted above is a
+  Mooncake Store build limitation, not a hardware one; the NVLink path itself is
+  healthy.
 - The dedicated InfiniBand fabric here is what a future multi-machine phase would
   use; it is not required for the current single-node multi-GPU work.
 

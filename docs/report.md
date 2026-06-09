@@ -299,7 +299,10 @@ deliberately sits on the wrong side of:
   **rejects it at init** (`unsupported_protocol protocol=nvlink_intra`), so the
   Store path supports only `tcp` and `rdma`. The single-node non-TCP fix is
   therefore **RDMA, not NVLink**; an NVLink path would need a different connector
-  and is out of scope here. TCP is documented as the universal fallback that needs
+  and is out of scope here. The NVLink hardware itself is healthy, validated at
+  about 270 GB/s GPU-to-GPU (`scripts/check_nvlink_p2p.py`), so the rejection is
+  purely a Store build limitation. TCP is documented as the universal fallback that
+  needs
   no special hardware, not a performance transport. A host shared-memory transport
   ("UBShmem") exists only behind a non-default build flag and is absent from the
   standard wheel. We then ran exactly this on RDMA; the result is below.
