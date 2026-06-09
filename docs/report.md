@@ -261,9 +261,10 @@ the CUDA build of both vLLM and Mooncake must be compatible with the host driver
 Both are baked into the launch scripts and the container image.
 
 The hit rate is the correctness signal, not a performance claim. Section 6.3 makes
-that distinction concrete: over TCP the reuse is real but slower than recomputing.
+that distinction concrete: over TCP the reuse is real but slower than recomputing,
+and over RDMA it pays off.
 
-### 6.3 Does the distributed cache lower latency over TCP? Not here
+### 6.3 Does the distributed cache lower latency? Not over TCP, yes over RDMA
 
 A high hit rate proves reuse happens; it does not prove reuse is faster than
 recomputing. A controlled comparison on the A100 node makes the difference
@@ -301,11 +302,27 @@ deliberately sits on the wrong side of:
   and is out of scope here. TCP is documented as the universal fallback that needs
   no special hardware, not a performance transport. A host shared-memory transport
   ("UBShmem") exists only behind a non-default build flag and is absent from the
-  standard wheel.
+  standard wheel. We then ran exactly this on RDMA; the result is below.
 - **Expensive recompute.** Much larger models, much longer contexts, or capacity
   pressure where the local alternative is eviction and a cascade of misses rather
   than a cheap prefill (the regime Section 6.1 isolates). When recompute is slow,
   even a moderate-speed fetch wins.
+
+**The RDMA result.** Switching the pool to RDMA (`MOONCAKE_PROTOCOL=rdma` on the
+GPU-affined `mlx5_0` NIC, with `nvidia_peermem` loaded for GPUDirect) flips the
+outcome. Same trace, same hardware:
+
+| Instance | Role | External hit rate | TTFT p50 | TTFT mean |
+| --- | --- | --- | --- | --- |
+| A | cold, full prefill | 0.0% | 26.9 ms | 61 ms |
+| B | pooled, cache hit (RDMA) | 98.3% | **19.5 ms** | **54 ms** |
+
+The pooled fetch is now faster than recomputing. B's measured KV load averaged
+**2.9 ms**, down from about 3,358 ms over TCP (roughly a thousandfold), moving
+434 MB at GB/s rates with zero failures and GPUDirect active on `mlx5_0`. The
+cross-instance cache is a net win over RDMA. The margin is small here (a 3B model
+and a 520-token prefix), and it widens as the model, the context, and the cache
+pressure grow.
 
 A separate run with longer prefixes (about 3,300 tokens, roughly 120 MB of KV each)
 exposed a hard ceiling on the TCP path: large transfers exhausted ephemeral TCP
@@ -314,10 +331,12 @@ fell to about 15%, and tail TTFT rose to 14 to 17 seconds. TCP is adequate to pr
 the mechanism on small prefixes and inadequate for anything larger, which is the
 operational reason RDMA is not optional for a real deployment.
 
-The honest conclusion: the prototype proves cross-instance reuse is correct, and it
-proves that over TCP that reuse does not pay for itself. No cross-instance
-performance gain is claimed from this tier; demonstrating one is exactly what the
-RDMA step in Section 7 is for.
+The honest conclusion: cross-instance reuse is correct (98.3% hit), it does not pay
+for itself over TCP, and it does pay off over RDMA, where the pooled fetch (about
+2.9 ms) is cheaper than recompute and B's time to first token drops below A's. The
+win is small on a 3B model with a 520-token prefix and grows with model size,
+context length, and cache pressure; quantifying that scaling, with throughput at
+real concurrency and the reliability gates, is what remains.
 
 ## 7. Recommendation and roadmap
 
@@ -338,11 +357,12 @@ Drop the Transfer-Engine-only option and NIXL from prototype scope; they are the
 transport floor, not a cache-management choice. Keep FlexKV as a comparison until
 its vLLM path matures past experimental. Native offload stays the baseline.
 
-**What remains for a report-grade performance result.** Move the prototype off TCP
-to RDMA over a GPU-affined NIC (the Store accepts only `tcp` and `rdma`, not
-NVLink), run a larger model under real concurrency, and measure TTFT and throughput
-against the baseline at matched hit rate, so we separate "the cache works" from
-"this implementation is efficient."
+**What remains for a report-grade performance result.** The single-node RDMA win is
+now demonstrated (Section 6.3): on a GPU-affined NIC with GPUDirect, the pooled
+fetch beats recompute. What remains is to scale it, a larger model and longer
+contexts where the margin grows, throughput at real concurrency rather than a
+single stream, and TTFT measured against the baseline at matched hit rate, so we
+separate "the cache works" from "this implementation is efficient."
 Then exercise the reliability gates: master loss and peer loss must degrade to
 recomputation, never to a wrong answer.
 

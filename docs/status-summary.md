@@ -2,13 +2,14 @@
 
 **TL;DR:** We investigated distributed KV caching options for LLM serving,
 recommended Mooncake Store, and proved cross-instance cache sharing works across
-two GPUs in a single machine (two A100s, one vLLM instance each). The key learning
-is that the mechanism is correct but the transport matters enormously. Our
-single-node setup was using TCP, which is the wrong choice and makes caching a net
-loss. We confirmed production uses RDMA, not TCP, and we tested the NVLink path and
-found the Mooncake Store does not accept it (only TCP and RDMA). So the next
-decision is whether to redo the single-node run on RDMA, or to reconsider whether a
-networked pool is the right tool for a single node at all.
+two GPUs in a single machine (two A100s, one vLLM instance each), with the second
+instance reusing about 98% of the cache the first computed. The key learning is
+that transport is everything. Over TCP the reuse was about 47 times slower than
+recomputing, a net loss; over RDMA with GPUDirect the pooled fetch is faster than
+recompute, so the cache pays off. Both the mechanism and the win are now
+demonstrated. What remains is scaling it (bigger models, real concurrency) and a
+strategic call on whether a networked pool fits a single node or is really a
+multi-node tool.
 
 ## What we set out to do
 
@@ -36,18 +37,16 @@ recommendation.
 
 - **Cross-instance reuse works.** Instance B reused about 98% of the KV that
   instance A computed, with zero transfer failures. The mechanism is correct.
-- **Over TCP it is a net loss.** Side by side, on the same hardware:
+- **Transport decides everything.** Same trace, same hardware, time to first token:
 
-  | | Recompute (cold) | Reuse from pool (TCP) |
-  | --- | --- | --- |
-  | Time to first token | about 39 ms | about 1,843 ms |
+  | | Recompute (cold) | Reuse from pool (TCP) | Reuse from pool (RDMA) |
+  | --- | --- | --- | --- |
+  | TTFT (p50) | about 27-39 ms | about 1,843 ms | about 19.5 ms |
 
-  Pulling cached KV over TCP was roughly 47 times slower than recomputing it,
-  because the TCP transport ran at only about 16 MB/s. Large prefixes failed
-  outright through TCP port exhaustion.
-- **Why.** We were moving data between two GPUs over TCP loopback on a machine
-  where those GPUs are directly connected by NVLink (hundreds of GB/s) that sat
-  idle. That is the wrong transport for a single box.
+  Over TCP the cache was ~47x slower than recomputing (the transport ran at only
+  ~16 MB/s, and large prefixes failed outright). Over RDMA with GPUDirect the same
+  fetch dropped to about 2.9 ms (from ~3.3 s), so reuse became faster than
+  recompute. The cache is a net loss over TCP and a net win over RDMA.
 
 ## What production actually uses (verified)
 
@@ -66,15 +65,15 @@ blog, rather than guessing:
 
 ## The open question (the decision for the meeting)
 
-Two things follow. First, our TCP result is unrepresentative by construction, and
-the fix is to switch the transport to RDMA (we confirmed the Store does not accept
-NVLink). On this box that means InfiniBand device passthrough into the containers
-and, for true zero-copy GPU transfers, loading `nvidia_peermem` for GPUDirect.
-Second, and more strategically: distributed KV pooling earns its keep across nodes
-over RDMA, so on a single node the better-fit production pattern may be the engine's
-native cache plus CPU or NVMe offload rather than a networked Store. The decision is
-whether to invest in single-node RDMA numbers or to revisit whether single-node is
-the right frame for a distributed pool at all.
+The transport question is now settled: RDMA works and the cache pays off on one
+node (we ran it; NVLink is not an option because the Store rejects it). Two things
+remain. First, scale the win, the margin is small on a 3B model with a short
+prefix, and it grows with model size, context length, real concurrency, and cache
+pressure; that is the report-grade number still to produce. Second, and more
+strategically: distributed KV pooling earns its keep most across nodes over RDMA,
+so on a single node the better-fit production pattern may be the engine's native
+cache plus CPU or NVMe offload rather than a networked Store. The decision is how
+far to push single-node RDMA numbers versus framing the pool as a multi-node tool.
 
 ## Where the work lives
 

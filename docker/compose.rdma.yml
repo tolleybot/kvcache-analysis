@@ -1,0 +1,39 @@
+# Override for the single-node RDMA run (MOONCAKE_PROTOCOL=rdma).
+#
+# The Mooncake Store accepts only tcp and rdma (it rejects nvlink_intra), so RDMA
+# is the single-node path to beat TCP. This override gives each instance access to
+# the InfiniBand devices and the memory-pinning privileges RDMA needs, and points
+# the Transfer Engine at mlx5_0, the Active 200 Gb IB NIC that is PXB-affined to
+# GPU 0 and GPU 1. For true zero-copy GPU transfers, load nvidia_peermem on the
+# host first (sudo modprobe nvidia_peermem); without it RDMA still runs but bounces
+# through CPU memory.
+#
+# Usage:
+#   MOONCAKE_PROTOCOL=rdma IMAGE=mloss-vllm-kvcache:mooncake \
+#     MODEL=Qwen/Qwen2.5-3B-Instruct SEGMENT_SIZE=8589934592 BUFFER_SIZE=2147483648 \
+#     docker compose -f docker/compose.mooncake.yml -f docker/compose.rdma.yml up -d
+
+services:
+  instance-a:
+    cap_add: [IPC_LOCK]
+    ulimits:
+      memlock: -1
+    volumes:
+      - /dev/infiniband:/dev/infiniband
+    device_cgroup_rules:
+      - "c 231:* rwm"
+      - "c 10:* rwm"
+    environment:
+      MOONCAKE_DEVICE: mlx5_0
+
+  instance-b:
+    cap_add: [IPC_LOCK]
+    ulimits:
+      memlock: -1
+    volumes:
+      - /dev/infiniband:/dev/infiniband
+    device_cgroup_rules:
+      - "c 231:* rwm"
+      - "c 10:* rwm"
+    environment:
+      MOONCAKE_DEVICE: mlx5_0
