@@ -82,16 +82,17 @@ and image so they apply everywhere harmlessly.
 
 ## Transport for the multi-GPU tier (Stage 3 performance)
 
-Scope is a single node, one vLLM instance per GPU sharing one Store pool, so the
-transport is the intra-node path between GPUs, not a cross-node fabric. The local
-proof used TCP, which works but is not representative. For representative numbers
-use one of:
+Scope is a single node, one vLLM instance per GPU sharing one Store pool. The local
+proof used TCP, which works but is not representative (it measured near 16 MB/s).
+The Store accepts only two protocols, `tcp` and `rdma`. NVLink is **not** an option
+here: although the Transfer Engine config lists an `nvlink_intra` protocol, the
+Mooncake Store client rejects it at init (`unsupported_protocol
+protocol=nvlink_intra`), so the GPUs' NVLink cannot be used through the Store. For
+representative numbers, use RDMA:
 
-- **NVLink**, the natural fast path between GPUs on one node (the A100 box is
-  fully NV12-connected). No NIC involved.
-- **RDMA loopback** over a GPU-affined local NIC. Set `MOONCAKE_PROTOCOL=rdma`
-  and `MOONCAKE_DEVICE` to the RNIC (e.g. `mlx5_4` for a GPU4/5 pair), and pass
-  the devices into the container:
+- **RDMA** over a GPU-affined local NIC. Set `MOONCAKE_PROTOCOL=rdma` and
+  `MOONCAKE_DEVICE` to the RNIC (e.g. `mlx5_4` for a GPU4/5 pair), and pass the
+  devices into the container:
 
   ```bash
   RDMA=1 bash docker/run-server.sh

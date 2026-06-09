@@ -5,10 +5,10 @@ recommended Mooncake Store, and proved cross-instance cache sharing works across
 two GPUs in a single machine (two A100s, one vLLM instance each). The key learning
 is that the mechanism is correct but the transport matters enormously. Our
 single-node setup was using TCP, which is the wrong choice and makes caching a net
-loss. We have since confirmed production uses RDMA (with an intra-node NVLink path
-available), not TCP, so the next decision is whether to redo the single-node run on
-NVLink or RDMA, or to reconsider whether a networked pool is the right tool for a
-single node at all.
+loss. We confirmed production uses RDMA, not TCP, and we tested the NVLink path and
+found the Mooncake Store does not accept it (only TCP and RDMA). So the next
+decision is whether to redo the single-node run on RDMA, or to reconsider whether a
+networked pool is the right tool for a single node at all.
 
 ## What we set out to do
 
@@ -58,21 +58,22 @@ blog, rather than guessing:
   GB200 run), and scales across nodes over RDMA with multi-NIC pooling. TCP is
   documented only as the universal, no-special-hardware fallback, never the
   performance transport.
-- Mooncake exposes a purpose-built **`nvlink_intra`** protocol for intra-node,
-  GPU-to-GPU transfers. That, not TCP and not host shared memory, is the right
-  setting for two GPUs in one box. (A shared-memory transport exists but is a
-  non-default build that is not in the standard package, so it is not a quick win.)
+- We tried switching our single-node run to NVLink (`nvlink_intra`). The Mooncake
+  Store **rejects it at startup** (`unsupported_protocol`): the Store path supports
+  only `tcp` and `rdma`. So the realistic single-node fix is **RDMA**, not NVLink.
+  (A host shared-memory transport exists but only as a non-default build absent
+  from the standard package, so it is not a quick win either.)
 
 ## The open question (the decision for the meeting)
 
-Two things follow. First, our TCP result is unrepresentative by construction, the
-fix is to switch the transport to `nvlink_intra` or RDMA, which also means changing
-the topology so both GPUs are visible to the transfer path (the current
-one-GPU-per-container setup blocks GPU-to-GPU NVLink). Second, and more
-strategically: distributed KV pooling earns its keep across nodes over RDMA, so on
-a single node the better-fit production pattern may be the engine's native cache
-plus CPU or NVMe offload rather than a networked Store. The decision is whether to
-invest in single-node `nvlink_intra` numbers or to revisit whether single-node is
+Two things follow. First, our TCP result is unrepresentative by construction, and
+the fix is to switch the transport to RDMA (we confirmed the Store does not accept
+NVLink). On this box that means InfiniBand device passthrough into the containers
+and, for true zero-copy GPU transfers, loading `nvidia_peermem` for GPUDirect.
+Second, and more strategically: distributed KV pooling earns its keep across nodes
+over RDMA, so on a single node the better-fit production pattern may be the engine's
+native cache plus CPU or NVMe offload rather than a networked Store. The decision is
+whether to invest in single-node RDMA numbers or to revisit whether single-node is
 the right frame for a distributed pool at all.
 
 ## Where the work lives

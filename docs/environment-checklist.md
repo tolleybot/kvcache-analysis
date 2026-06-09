@@ -82,10 +82,11 @@ Implications:
   on the A100, verified by a kernel launch. So the default image needs no tag
   override, and the base `mooncake-transfer-engine` wheel (not `-cuda13`) works
   alongside it.
-- `nvidia_peermem` is not loaded. It only matters if the intra-node transport is
-  RDMA and we want GPUDirect (NIC DMA straight to and from GPU memory) rather than
-  a CPU bounce. The NVLink path between GPUs does not need it. Load it with
-  `modprobe nvidia_peermem` (needs privilege) only if measuring RDMA on-node.
+- `nvidia_peermem` is not loaded. It matters for the single-node performance path,
+  because the Mooncake Store accepts only `tcp` and `rdma` (it rejects
+  `nvlink_intra` at init), so beating TCP means RDMA, and RDMA wants GPUDirect (NIC
+  DMA straight to and from GPU memory) rather than a CPU bounce. Load it with
+  `modprobe nvidia_peermem` (needs privilege) before measuring RDMA on-node.
 - The dedicated InfiniBand fabric here is what a future multi-machine phase would
   use; it is not required for the current single-node multi-GPU work.
 

@@ -289,18 +289,19 @@ and TCP transport, that inequality is inverted, so the distributed cache is a ne
 latency loss. It flips in favour of the cache on two axes, both of which this run
 deliberately sits on the wrong side of:
 
-- **Cheap fetch.** NVLink or RDMA, the transports the Mooncake Transfer Engine
-  exists to use, move KV at GPU-interconnect or fabric speeds rather than ~16 MB/s.
-  This is the deferred next step, and it is what makes the fetch competitive.
-  Verified against Mooncake's config and docs: the engine exposes an
-  **`nvlink_intra`** protocol for exactly this single-node, GPU-to-GPU case, and
-  production deployments use **GPUDirect RDMA even within a single node** (the vLLM
-  Mooncake Store blog's 1P1D baseline on 12 GB200 GPUs). TCP is documented as the
-  universal fallback that needs no special hardware, not a performance transport. A
-  host shared-memory transport ("UBShmem") exists but is gated behind a non-default
-  build flag and is not in the standard wheel, so the realistic single-node fix is
-  `nvlink_intra`, not shared memory. The KV being moved is GPU memory, so the
-  intra-node NVLink path, not a host memcpy, is the relevant one.
+- **Cheap fetch.** RDMA is the transport the Mooncake Transfer Engine exists to
+  use; it moves KV at fabric speeds rather than ~16 MB/s, and production deployments
+  use GPUDirect RDMA even within a single node (the vLLM Mooncake Store blog's 1P1D
+  baseline on 12 GB200 GPUs). This is the deferred next step and what makes the
+  fetch competitive. A correction from testing: although the Transfer Engine config
+  lists an `nvlink_intra` protocol, the Mooncake Store client that vLLM uses
+  **rejects it at init** (`unsupported_protocol protocol=nvlink_intra`), so the
+  Store path supports only `tcp` and `rdma`. The single-node non-TCP fix is
+  therefore **RDMA, not NVLink**; an NVLink path would need a different connector
+  and is out of scope here. TCP is documented as the universal fallback that needs
+  no special hardware, not a performance transport. A host shared-memory transport
+  ("UBShmem") exists only behind a non-default build flag and is absent from the
+  standard wheel.
 - **Expensive recompute.** Much larger models, much longer contexts, or capacity
   pressure where the local alternative is eviction and a cascade of misses rather
   than a cheap prefill (the regime Section 6.1 isolates). When recompute is slow,
@@ -316,7 +317,7 @@ operational reason RDMA is not optional for a real deployment.
 The honest conclusion: the prototype proves cross-instance reuse is correct, and it
 proves that over TCP that reuse does not pay for itself. No cross-instance
 performance gain is claimed from this tier; demonstrating one is exactly what the
-NVLink or RDMA step in Section 7 is for.
+RDMA step in Section 7 is for.
 
 ## 7. Recommendation and roadmap
 
@@ -338,9 +339,10 @@ transport floor, not a cache-management choice. Keep FlexKV as a comparison unti
 its vLLM path matures past experimental. Native offload stays the baseline.
 
 **What remains for a report-grade performance result.** Move the prototype off TCP
-to NVLink or RDMA loopback over a GPU-affined NIC, run a larger model under real
-concurrency, and measure TTFT and throughput against the baseline at matched hit
-rate, so we separate "the cache works" from "this implementation is efficient."
+to RDMA over a GPU-affined NIC (the Store accepts only `tcp` and `rdma`, not
+NVLink), run a larger model under real concurrency, and measure TTFT and throughput
+against the baseline at matched hit rate, so we separate "the cache works" from
+"this implementation is efficient."
 Then exercise the reliability gates: master loss and peer loss must degrade to
 recomputation, never to a wrong answer.
 
@@ -426,8 +428,8 @@ will care about most.
   count, and the cluster-grade performance number is not yet among them.
 
 - **The prototype number is a correctness signal over TCP.** Cross-instance reuse
-  is proven, but representative latency and throughput require NVLink or RDMA, a
-  larger model, and real concurrency.
+  is proven, but representative latency and throughput require RDMA (the Store does
+  not accept NVLink, see Section 6.3), a larger model, and real concurrency.
 
 - **Baseline and prototype ran on different hardware.** The baseline is from a
   12 GB consumer GPU and the prototype from 8x A100, so the two are not directly

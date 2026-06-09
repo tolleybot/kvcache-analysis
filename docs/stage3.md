@@ -12,8 +12,10 @@ This is option (b) from the survey: full Mooncake Store via the vLLM
 `KVConnector`, chosen as the first prototype for its directness and clean
 attribution. It was validated over TCP, first co-located on one GPU and then
 across two separate GPUs, as a mechanical proof. Representative performance
-numbers still require switching the multi-GPU run off TCP to NVLink or RDMA; the
-scope is single-node multi-GPU and multi-machine reuse is deferred.
+numbers still require switching the multi-GPU run off TCP to RDMA; the Store
+accepts only `tcp` and `rdma` (an attempt to use `nvlink_intra` is rejected at
+init as `unsupported_protocol`). The scope is single-node multi-GPU and
+multi-machine reuse is deferred.
 
 ## Architecture
 
@@ -124,7 +126,7 @@ shows zero external queries, which is the control.
 | B external queries (blocks) | 2,912 |
 | B local hit rate | 58.4% (within-instance, phase 2) |
 | Model | Qwen2.5-0.5B-Instruct |
-| Transport | TCP (not representative; NVLink or RDMA is the multi-GPU tier) |
+| Transport | TCP (not representative; RDMA is the multi-GPU tier) |
 | KV bytes written by A to store | ~28 MB over 11 puts |
 
 The hit rate is the correctness signal, not a performance claim. Absolute
@@ -139,10 +141,11 @@ is done: instances on GPU 0 and GPU 1 over TCP reached the 96.7% external hit ra
 above, with the exact Docker recipe in `runbook.md`. What remains turns that into
 a report-grade performance result:
 
-- Switch the pool off TCP. NVLink (the GPUs are fully NV12-connected) is the
-  natural fast path between instances on one node; the alternative is `rdma`
-  loopback over a GPU-affined local NIC, which wants `nvidia_peermem` loaded for
-  GPUDirect. The cross-node fabric is not involved at this scope.
+- Switch the pool off TCP to `rdma`. The Store accepts only `tcp` and `rdma`, not
+  NVLink (`nvlink_intra` is rejected at init as `unsupported_protocol`, so the
+  GPUs' NVLink is not usable through the Store). RDMA here means a GPU-affined local
+  NIC with `nvidia_peermem` loaded for GPUDirect; the cross-node fabric is not
+  otherwise involved at this scope.
 - Measure representative TTFT and throughput with the cross-instance hit rate, and
   compare against the Stage 2 baseline to quantify the gain.
 - Exercise the reliability gates from the rubric: behavior when the master or a
