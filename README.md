@@ -21,7 +21,8 @@ Detailed material lives in `docs/`; this file links into it.
 | 1 | Sourced survey and comparison of candidates | Done (`docs/survey.md`) |
 | 2 | Baseline benchmark of native vLLM caching | Done (`docs/baseline.md`) |
 | 3 | Mooncake Store prototype, cross-instance reuse | Proven locally (`docs/stage3.md`) |
-| 3+ | Multi-GPU tier: one vLLM instance per GPU on one node, representative numbers | Next |
+| 3+ | Multi-GPU tier: one instance per GPU, cross-instance reuse over RDMA | Done, single node (`docs/report.md` §6.3) |
+| 3++ | Scale the win (larger model, concurrency, throughput) and reliability gates | Next |
 
 ## Strategy
 
@@ -84,10 +85,14 @@ project is containerized so the same setup runs on any machine; see
   a constrained per-instance cache it collapses (0%, 30.6%, 61.5%) and time to
   first token roughly doubles. That gap is the motivation for a distributed pool.
   Full numbers in `docs/baseline.md`.
-- **Prototype (Stage 3), Mooncake Store.** Two vLLM instances sharing one Store
-  pool achieved a 96.7% cross-instance hit rate on instance B for prefixes
-  computed by instance A, over TCP on a single GPU. This is a correctness proof
-  of the mechanism, not a performance result. Full detail in `docs/stage3.md`.
+- **Prototype (Stage 3), Mooncake Store, multi-GPU.** Two instances on two A100s
+  (one each) sharing one Store pool: instance B reused about 98% of the KV instance
+  A computed. The payoff depends entirely on transport. Over TCP the pooled fetch
+  was about 47 times slower than recomputing (a net loss); over RDMA with GPUDirect
+  it was faster than recompute (B time to first token 19.5 ms versus A's 26.9 ms
+  cold), with the KV load dropping from about 3.3 s to about 2.9 ms. Cross-instance
+  reuse is correct, and a net win over RDMA. Full detail in `docs/report.md`
+  Section 6.3.
 
 ## Two findings that gate distributed reuse
 
@@ -115,7 +120,8 @@ bash docker/run-bench.sh         # baseline sweep
 
 ## Repository map
 
-- `docs/report.md` the consolidated standalone report: investigation, comparison, and recommendation in one document
+- `docs/report.md` the consolidated standalone report: investigation, comparison, and recommendation in one document (start here)
+- `docs/status-summary.md` the one-page summary for a quick read or a meeting
 - `docs/evaluation-rubric.md` the Stage 0 success definition and weighted rubric
 - `docs/environment-checklist.md` RDMA fabric questions and diagnostic commands
 - `docs/survey.md` the sourced candidate comparison and recommendation
@@ -129,19 +135,22 @@ bash docker/run-bench.sh         # baseline sweep
 
 ## Continuing the work
 
-The next step is the multi-GPU tier, and the scope is deliberately single node.
-Run at least two vLLM instances, one pinned per GPU, sharing one Mooncake Store
-pool with a real model (the 3B baseline or larger), to get representative time to
-first token and throughput against the Stage 2 baseline, then exercise the
-reliability gates (master or peer failure degrading to recompute). The prototype
-is ready for this: build with `--build-arg INSTALL_MOONCAKE=1` and bring up
-`docker/compose.mooncake.yml`, which already places one instance per GPU.
+The single-node multi-GPU result is in: on the 8x A100 box, cross-instance reuse
+over RDMA beats recompute (instance B reused about 98% of instance A's KV with lower
+time to first token than recomputing; `docs/report.md` Section 6.3). The box runs
+the stock vLLM v0.22.0 image as-is through CUDA forward compatibility, so no separate
+hardware and no image tag override are needed. What remains:
 
-This now runs on a benchmark-tier node (8x NVIDIA A100-SXM4-80GB, fully
-NVLink-connected; recorded in `docs/environment-checklist.md`), so the multi-GPU
-prototype no longer needs separate hardware. The stock vLLM v0.22.0 image runs
-as-is here: its CUDA 13 build works on the box's CUDA 12.8 driver through CUDA
-forward compatibility, verified by a kernel launch, so no image tag override is
-needed and the base `mooncake-transfer-engine` wheel works alongside it.
-Multi-machine reuse over the cross-node InfiniBand fabric is out of scope for now
-and is recorded as future work.
+- **Scale the win.** A larger model and longer contexts, where the margin grows,
+  throughput at real concurrency rather than a single stream, and TTFT against the
+  Stage 2 baseline at matched hit rate.
+- **Reliability gates.** Master or peer failure must degrade to recompute, never to
+  a wrong or failed answer.
+- **A strategic call.** Distributed pooling earns its keep most across nodes over
+  RDMA, so on a single node the better-fit production pattern may be native caching
+  plus CPU or NVMe offload rather than a networked Store. Multi-machine reuse over
+  the cross-node InfiniBand fabric is deferred as future work.
+
+To reproduce, build with `--build-arg INSTALL_MOONCAKE=1` and bring up
+`docker/compose.mooncake.yml` (add `docker/compose.rdma.yml` for the RDMA
+transport). Full recipe in `docs/runbook.md`.
