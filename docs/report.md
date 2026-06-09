@@ -292,6 +292,15 @@ deliberately sits on the wrong side of:
 - **Cheap fetch.** NVLink or RDMA, the transports the Mooncake Transfer Engine
   exists to use, move KV at GPU-interconnect or fabric speeds rather than ~16 MB/s.
   This is the deferred next step, and it is what makes the fetch competitive.
+  Verified against Mooncake's config and docs: the engine exposes an
+  **`nvlink_intra`** protocol for exactly this single-node, GPU-to-GPU case, and
+  production deployments use **GPUDirect RDMA even within a single node** (the vLLM
+  Mooncake Store blog's 1P1D baseline on 12 GB200 GPUs). TCP is documented as the
+  universal fallback that needs no special hardware, not a performance transport. A
+  host shared-memory transport ("UBShmem") exists but is gated behind a non-default
+  build flag and is not in the standard wheel, so the realistic single-node fix is
+  `nvlink_intra`, not shared memory. The KV being moved is GPU memory, so the
+  intra-node NVLink path, not a host memcpy, is the relevant one.
 - **Expensive recompute.** Much larger models, much longer contexts, or capacity
   pressure where the local alternative is eviction and a cascade of misses rather
   than a cheap prefill (the regime Section 6.1 isolates). When recompute is slow,

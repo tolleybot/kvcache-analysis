@@ -5,8 +5,10 @@ recommended Mooncake Store, and proved cross-instance cache sharing works across
 two GPUs in a single machine (two A100s, one vLLM instance each). The key learning
 is that the mechanism is correct but the transport matters enormously. Our
 single-node setup was using TCP, which is the wrong choice and makes caching a net
-loss. The next decision is to align on the transport and topology that production
-actually uses.
+loss. We have since confirmed production uses RDMA (with an intra-node NVLink path
+available), not TCP, so the next decision is whether to redo the single-node run on
+NVLink or RDMA, or to reconsider whether a networked pool is the right tool for a
+single node at all.
 
 ## What we set out to do
 
@@ -47,15 +49,31 @@ recommendation.
   where those GPUs are directly connected by NVLink (hundreds of GB/s) that sat
   idle. That is the wrong transport for a single box.
 
+## What production actually uses (verified)
+
+We checked this against Mooncake's own config and docs and the vLLM Mooncake Store
+blog, rather than guessing:
+
+- Production uses **GPUDirect RDMA**, even in the single-node baseline (a 12-GPU
+  GB200 run), and scales across nodes over RDMA with multi-NIC pooling. TCP is
+  documented only as the universal, no-special-hardware fallback, never the
+  performance transport.
+- Mooncake exposes a purpose-built **`nvlink_intra`** protocol for intra-node,
+  GPU-to-GPU transfers. That, not TCP and not host shared memory, is the right
+  setting for two GPUs in one box. (A shared-memory transport exists but is a
+  non-default build that is not in the standard package, so it is not a quick win.)
+
 ## The open question (the decision for the meeting)
 
-On a single multi-GPU machine, what transport and topology should we use, and is a
-networked Store even the right tool here? The sourced material strongly suggests
-that production distributed KV caching is a multi-node, RDMA story (for example
-Moonshot's Kimi and large GPU-cluster tests). On a single node the production
-pattern may instead be the engine's native cache plus CPU or NVMe offload.
-Recommended next step: confirm what production deployments actually run before
-investing more in single-node experiments.
+Two things follow. First, our TCP result is unrepresentative by construction, the
+fix is to switch the transport to `nvlink_intra` or RDMA, which also means changing
+the topology so both GPUs are visible to the transfer path (the current
+one-GPU-per-container setup blocks GPU-to-GPU NVLink). Second, and more
+strategically: distributed KV pooling earns its keep across nodes over RDMA, so on
+a single node the better-fit production pattern may be the engine's native cache
+plus CPU or NVMe offload rather than a networked Store. The decision is whether to
+invest in single-node `nvlink_intra` numbers or to revisit whether single-node is
+the right frame for a distributed pool at all.
 
 ## Where the work lives
 
