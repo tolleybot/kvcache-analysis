@@ -113,7 +113,7 @@ hardware portability matrix, and the Stage 3 multi-instance instructions. In
 short:
 
 ```bash
-docker build -f docker/Dockerfile -t mloss-vllm-kvcache:latest .
+docker build -f docker/Dockerfile -t kvcache:latest .
 bash docker/run-server.sh        # baseline server
 bash docker/run-bench.sh         # baseline sweep
 ```
