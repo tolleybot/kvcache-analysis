@@ -4,14 +4,14 @@
 # and InfiniBand device passthrough).
 #
 # Build the image with Mooncake first:
-#   docker build -f docker/Dockerfile --build-arg INSTALL_MOONCAKE=1 -t mloss-vllm-kvcache:mooncake .
+#   docker build -f docker/Dockerfile --build-arg INSTALL_MOONCAKE=1 -t kvcache:mooncake .
 #   MODEL=Qwen/Qwen2.5-3B-Instruct docker compose -f docker/compose.mooncake.yml up
 #
 # Then run the cross-instance test in a client container on the host network (no
 # host virtualenv needed; the image carries bench/ and its deps, tools are
 # python3). See docs/runbook.md for the full recipe:
 #   docker run --rm --network host -v "$PWD/bench/results:/app/bench/results" \
-#     mloss-vllm-kvcache:mooncake -lc 'python3 -m bench.run_xinstance \
+#     kvcache:mooncake -lc 'python3 -m bench.run_xinstance \
 #     --trace /tmp/trace_xinst.jsonl --model "$MODEL" --port-a 8000 --port-b 8001'
 
 x-instance-env: &instance-env
@@ -31,7 +31,7 @@ x-instance-env: &instance-env
 
 services:
   master:
-    image: ${IMAGE:-mloss-vllm-kvcache:mooncake}
+    image: ${IMAGE:-kvcache:mooncake}
     command: ["-lc", "bash scripts/serve_master.sh"]
     environment:
       MASTER_PORT: "50051"
@@ -45,7 +45,7 @@ services:
       retries: 20
 
   instance-a:
-    image: ${IMAGE:-mloss-vllm-kvcache:mooncake}
+    image: ${IMAGE:-kvcache:mooncake}
     command: ["-lc", "bash scripts/serve_mooncake.sh"]
     environment:
       <<: *instance-env
@@ -69,7 +69,7 @@ services:
               capabilities: [gpu]
 
   instance-b:
-    image: ${IMAGE:-mloss-vllm-kvcache:mooncake}
+    image: ${IMAGE:-kvcache:mooncake}
     command: ["-lc", "bash scripts/serve_mooncake.sh"]
     environment:
       <<: *instance-env

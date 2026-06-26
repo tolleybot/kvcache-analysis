@@ -2,7 +2,7 @@
 # Launch the baseline vLLM server inside the container with GPU access.
 #
 # Environment knobs (all optional):
-#   IMAGE          container image (default mloss-vllm-kvcache:latest)
+#   IMAGE          container image (default kvcache:latest)
 #   PORT           host port to publish (default 8000)
 #   RDMA=1         enable RDMA device passthrough for cluster runs
 #   DETACH=1       run detached instead of foreground
@@ -11,7 +11,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-IMAGE="${IMAGE:-mloss-vllm-kvcache:latest}"
+IMAGE="${IMAGE:-kvcache:latest}"
 PORT="${PORT:-8000}"
 
 RUN_FLAGS=(--rm --gpus all --shm-size=8g)

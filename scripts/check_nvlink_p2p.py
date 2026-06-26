@@ -14,7 +14,7 @@ bounce would be roughly 20 GB/s.
 Requires torch with CUDA and at least two visible GPUs, so run it where both are
 visible, for example inside the project image:
 
-    docker run --rm --gpus '"device=0,1"' mloss-vllm-kvcache:mooncake \\
+    docker run --rm --gpus '"device=0,1"' kvcache:mooncake \\
       -lc 'python3 scripts/check_nvlink_p2p.py'
 """
 

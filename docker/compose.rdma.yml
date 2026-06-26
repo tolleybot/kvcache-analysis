@@ -9,7 +9,7 @@
 # through CPU memory.
 #
 # Usage:
-#   MOONCAKE_PROTOCOL=rdma IMAGE=mloss-vllm-kvcache:mooncake \
+#   MOONCAKE_PROTOCOL=rdma IMAGE=kvcache:mooncake \
 #     MODEL=Qwen/Qwen2.5-3B-Instruct SEGMENT_SIZE=8589934592 BUFFER_SIZE=2147483648 \
 #     docker compose -f docker/compose.mooncake.yml -f docker/compose.rdma.yml up -d
 

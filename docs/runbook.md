@@ -10,7 +10,7 @@ memory.
 
 ```bash
 # 1. Build the image (see the tag matrix below if not on a recent driver)
-docker build -f docker/Dockerfile -t mloss-vllm-kvcache:latest .
+docker build -f docker/Dockerfile -t kvcache:latest .
 
 # 2. Start the baseline server (foreground)
 bash docker/run-server.sh                      # serves Qwen2.5-3B on :8000
@@ -142,11 +142,11 @@ A100, instances on GPU 0 and GPU 1, TCP transport).
 #    CUDA 12.8 driver via forward compatibility, so no tag override is needed, and
 #    the base mooncake-transfer-engine wheel works alongside it.
 docker build -f docker/Dockerfile --build-arg INSTALL_MOONCAKE=1 \
-  -t mloss-vllm-kvcache:mooncake .
+  -t kvcache:mooncake .
 
 # 2. Bring up the master plus one instance per GPU (instance-a on GPU 0 -> :8000,
 #    instance-b on GPU 1 -> :8001). Detached, so the same shell drives the test.
-IMAGE=mloss-vllm-kvcache:mooncake MODEL=Qwen/Qwen2.5-3B-Instruct \
+IMAGE=kvcache:mooncake MODEL=Qwen/Qwen2.5-3B-Instruct \
   docker compose -f docker/compose.mooncake.yml up -d
 
 # 3. Wait for both instances to report healthy.
@@ -156,7 +156,7 @@ until curl -sf localhost:8000/health && curl -sf localhost:8001/health; do sleep
 #    host virtualenv is needed: the image carries bench/ and its deps. The tools
 #    are python3, not python. Results persist to bench/results/ on the host.
 docker run --rm --network host -v "$(pwd)/bench/results:/app/bench/results" \
-  mloss-vllm-kvcache:mooncake -lc '
+  kvcache:mooncake -lc '
     python3 -m bench.trace --num-sessions 8 --turns-per-session 2 \
       --shared-system-fraction 0.5 --system-words 300 --out /tmp/trace_xinst.jsonl
     python3 -m bench.run_xinstance --trace /tmp/trace_xinst.jsonl \

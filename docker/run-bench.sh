@@ -6,14 +6,14 @@
 # via a bind mount.
 #
 # Environment knobs:
-#   IMAGE   container image (default mloss-vllm-kvcache:latest)
+#   IMAGE   container image (default kvcache:latest)
 #   HOST    server host as seen from the container (default localhost)
 #   PORT    server port (default 8000)
 #   LABEL, MODEL, CONCURRENCY, MAX_MODEL_LEN  passed to scripts/run_sweep.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-IMAGE="${IMAGE:-mloss-vllm-kvcache:latest}"
+IMAGE="${IMAGE:-kvcache:latest}"
 
 docker run --rm --network host \
   -v "$(pwd)/bench/results:/app/bench/results" \
