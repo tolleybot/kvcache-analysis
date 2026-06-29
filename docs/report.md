@@ -42,9 +42,12 @@ cannot do, cross-instance reuse.
 **Evidence in one line each.** Under a per-instance cache too small for the
 working set, native vLLM's hit rate collapses to zero and time to first token
 roughly doubles, which is the loss a pool exists to recover. Two vLLM instances
-sharing one Mooncake Store pool, one per GPU on an 8x A100 node, reached a
-**96.7% cross-instance hit rate** on the instance that never computed the
-prefixes, proving the mechanism end to end.
+sharing one Mooncake Store pool reused about **98%** of each other's KV, proving the
+mechanism. The payoff hinges entirely on transport: over TCP the pooled fetch was
+about **47x slower** than recomputing (a net loss), but over **RDMA** with GPUDirect
+it was faster than recompute (time to first token about **19 ms versus 27 ms**
+cold), and that win held **across two physical machines** on an InfiniBand fabric,
+the production-shaped scenario. Section 6.3 consolidates the numbers.
 
 ## 2. The problem and the workload
 
@@ -267,77 +270,49 @@ and over RDMA it pays off.
 ### 6.3 Does the distributed cache lower latency? Not over TCP, yes over RDMA
 
 A high hit rate proves reuse happens; it does not prove reuse is faster than
-recomputing. A controlled comparison on the A100 node makes the difference
-concrete. Using 24 sessions with distinct, long system prompts (so no instance can
-reuse anything locally), instance A served every prompt first with an empty pool,
-which is the cold full-prefill control, and instance B then served the same prompts
-from the now-populated pool.
+recomputing. A controlled comparison on the A100 hardware makes the difference
+concrete, and the table below consolidates the whole transport story. All three
+conditions use the same 24-session trace with distinct, long system prompts (so no
+instance reuses anything locally): instance A serves every prompt first with an
+empty pool (the cold, full-prefill control), then instance B serves the same prompts
+from the populated pool. Only the transport, and whether B shares a box with A or
+sits on a second node, changes between rows.
 
-| Instance | Role | External hit rate | TTFT p50 | TTFT mean |
-| --- | --- | --- | --- | --- |
-| A | cold, full prefill | 0.0% | 38.9 ms | 75 ms |
-| B | pooled, cache hit | 98.3% | 1,843 ms | 2,085 ms |
+| Condition | B hit rate | KV load (avg) | B pooled TTFT p50 | A cold TTFT p50 | Outcome |
+| --- | --- | --- | --- | --- | --- |
+| Single machine, TCP | 98.3% | ~3,358 ms | 1,843 ms | 38.9 ms | net loss, ~47x slower |
+| Single machine, RDMA | 98.3% | ~2.9 ms | **19.5 ms** | 26.9 ms | **net win** |
+| Cross machine (two nodes), RDMA | 98.3% | ~2.4 ms | **19.3 ms** | 26.0 ms | **net win** |
 
-B reused 98.3% of A's KV with zero transfer failures, yet its time to first token
-was roughly 47 times worse. The cause is the transport: B's measured KV load
-averaged about 3.3 seconds for tens of megabytes, an effective rate near 16 MB/s,
-which is far slower than recomputing a roughly 520-token prefix on an A100 (about
-39 ms).
+The reuse rate is identical (98.3%) and no transfer ever failed; only the transport
+changes the verdict. A cache helps only when fetching cached KV is cheaper than
+recomputing it. Over TCP the KV load averaged about 3.3 seconds for tens of
+megabytes (an effective ~16 MB/s), far slower than recomputing a ~520-token prefix
+on an A100 (~39 ms), so the inequality is inverted and the cache is a net loss. Over
+RDMA with GPUDirect the same load drops to ~2.9 ms (moving 434 MB at GB/s rates), so
+the fetch beats recompute and B's time to first token falls below A's. The win is
+modest here (a 3B model, a 520-token prefix) and widens with model size, context
+length, and cache pressure, the regime (Section 6.1) where recompute is expensive.
 
-This is the central caveat stated as a measurement. A cache helps only when
-fetching cached KV is cheaper than recomputing it. On a fast GPU with a small model
-and TCP transport, that inequality is inverted, so the distributed cache is a net
-latency loss. It flips in favour of the cache on two axes, both of which this run
-deliberately sits on the wrong side of:
+**Transport notes.** RDMA is the transport the Mooncake Transfer Engine exists to
+use, and production deployments use GPUDirect RDMA even within a single node (the
+vLLM Mooncake Store blog's 1P1D baseline on 12 GB200 GPUs); TCP is the universal,
+no-special-hardware fallback, not a performance transport. NVLink is not available
+through the Store: although the Transfer Engine config lists an `nvlink_intra`
+protocol, the Mooncake Store client rejects it at init (`unsupported_protocol`), so
+the Store accepts only `tcp` and `rdma`. The NVLink hardware is healthy (validated
+at ~270 GB/s GPU-to-GPU, `scripts/check_nvlink_p2p.py`); the rejection is purely a
+Store build limitation. A host shared-memory transport ("UBShmem") exists only
+behind a non-default build flag and is absent from the standard wheel.
 
-- **Cheap fetch.** RDMA is the transport the Mooncake Transfer Engine exists to
-  use; it moves KV at fabric speeds rather than ~16 MB/s, and production deployments
-  use GPUDirect RDMA even within a single node (the vLLM Mooncake Store blog's 1P1D
-  baseline on 12 GB200 GPUs). This is the deferred next step and what makes the
-  fetch competitive. A correction from testing: although the Transfer Engine config
-  lists an `nvlink_intra` protocol, the Mooncake Store client that vLLM uses
-  **rejects it at init** (`unsupported_protocol protocol=nvlink_intra`), so the
-  Store path supports only `tcp` and `rdma`. The single-node non-TCP fix is
-  therefore **RDMA, not NVLink**; an NVLink path would need a different connector
-  and is out of scope here. The NVLink hardware itself is healthy, validated at
-  about 270 GB/s GPU-to-GPU (`scripts/check_nvlink_p2p.py`), so the rejection is
-  purely a Store build limitation. TCP is documented as the universal fallback that
-  needs
-  no special hardware, not a performance transport. A host shared-memory transport
-  ("UBShmem") exists only behind a non-default build flag and is absent from the
-  standard wheel. We then ran exactly this on RDMA; the result is below.
-- **Expensive recompute.** Much larger models, much longer contexts, or capacity
-  pressure where the local alternative is eviction and a cascade of misses rather
-  than a cheap prefill (the regime Section 6.1 isolates). When recompute is slow,
-  even a moderate-speed fetch wins.
-
-**The RDMA result.** Switching the pool to RDMA (`MOONCAKE_PROTOCOL=rdma` on the
-GPU-affined `mlx5_0` NIC, with `nvidia_peermem` loaded for GPUDirect) flips the
-outcome. Same trace, same hardware:
-
-| Instance | Role | External hit rate | TTFT p50 | TTFT mean |
-| --- | --- | --- | --- | --- |
-| A | cold, full prefill | 0.0% | 26.9 ms | 61 ms |
-| B | pooled, cache hit (RDMA) | 98.3% | **19.5 ms** | **54 ms** |
-
-The pooled fetch is now faster than recomputing. B's measured KV load averaged
-**2.9 ms**, down from about 3,358 ms over TCP (roughly a thousandfold), moving
-434 MB at GB/s rates with zero failures and GPUDirect active on `mlx5_0`. The
-cross-instance cache is a net win over RDMA. The margin is small here (a 3B model
-and a 520-token prefix), and it widens as the model, the context, and the cache
-pressure grow. (This run was single-node: both instances on one box, RDMA over the
-local NIC.)
-
-**Cross-machine (GR-1331).** The same comparison run across two physical nodes,
-instance A on `latpoc51` (192.168.147.151) and instance B on `latpoc52`
-(192.168.147.152), one A100 each, on a shared 200 Gb InfiniBand fabric, holds up.
-B pulled 98.3% of A's KV across the wire with TTFT p50 **19.3 ms** versus A's
-**26.0 ms** cold, and the cross-node KV load averaged **2.4 ms** for 434 MB with
-zero failures (RDMA over `mlx5_0`, LID and GID confirmed in the logs). So
-cross-instance reuse is a net win not only within a box but between machines, which
-is the production-shaped scenario. The raw fabric measured 169 Gb/sec node-to-node
-by `ib_write_bw`, so it is not the bottleneck; the cross-node numbers essentially
-match the single-node RDMA ones.
+**Cross-machine (GR-1331).** The third row ran across two physical nodes, A on
+`latpoc51` (192.168.147.151) and B on `latpoc52` (192.168.147.152), one A100 each,
+on a shared 200 Gb InfiniBand fabric. B pulled A's KV across the wire (RDMA over
+`mlx5_0`, LID and GID confirmed in the logs) and still beat recompute. The raw
+fabric measured 169 Gb/sec node-to-node (`ib_write_bw`), so it is not the
+bottleneck, and the cross-node numbers essentially match the single-node RDMA ones.
+Cross-instance reuse is a net win not only within a box but between machines, which
+is the production-shaped scenario.
 
 A separate run with longer prefixes (about 3,300 tokens, roughly 120 MB of KV each)
 exposed a hard ceiling on the TCP path: large transfers exhausted ephemeral TCP
