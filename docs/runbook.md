@@ -186,8 +186,76 @@ Section 6.3):
   ports and the transfers fail. TCP is fine to prove the mechanism on small
   prefixes; representative performance needs `MOONCAKE_PROTOCOL=rdma`.
 
-For the RDMA performance tier, set `MOONCAKE_PROTOCOL=rdma` and `MOONCAKE_DEVICE`
-to the RNIC, and run with host networking and IB device passthrough.
+## Cross-node (two-host) RDMA, GR-1331
+
+How the cross-machine result in `report.md` Section 6.3 was produced: one A100 node
+each (`latpoc51` 192.168.147.151, `latpoc52` 192.168.147.152) on a shared 200 Gb
+InfiniBand fabric, one vLLM instance per node sharing one Store pool, KV crossing
+the wire over RDMA. The single-host Compose cannot span two hosts, so the containers
+are launched directly with host networking and IB passthrough.
+
+Prerequisites on **both** nodes: the `kvcache:mooncake` image, `nvidia_peermem`
+loaded (`sudo modprobe nvidia_peermem`) for GPUDirect, and the GPU-affined Active IB
+NIC (here `mlx5_0`). Validate the fabric first:
+
+```bash
+# latpoc51 (server):
+ib_write_bw -d mlx5_0 -F --report_gbits
+# latpoc52 (client), targets 51's IP; measured ~169 Gb/s here:
+ib_write_bw -d mlx5_0 -F --report_gbits 192.168.147.151
+```
+
+Key cross-host detail: each instance must advertise its own node IP for the RDMA
+handshake. vLLM's `get_ip()` honors `VLLM_HOST_IP`, so set it per node (with host
+networking it auto-detects correctly too, but set it to be deterministic).
+`PYTHONHASHSEED` is fixed to 0 inside `serve_mooncake.sh`, so both nodes agree.
+
+```bash
+# --- on latpoc51: master + instance-a (GPU 0) ---
+docker run -d --network host --name mc-master kvcache:mooncake \
+  -lc 'bash scripts/serve_master.sh'
+
+docker run -d --network host --gpus '"device=0"' \
+  --cap-add=IPC_LOCK --ulimit memlock=-1 --device=/dev/infiniband \
+  -e VLLM_HOST_IP=192.168.147.151 \
+  -e MODEL=Qwen/Qwen2.5-3B-Instruct -e PORT=8000 -e BOOTSTRAP_PORT=8998 \
+  -e MASTER_ADDR=192.168.147.151:50051 \
+  -e MOONCAKE_PROTOCOL=rdma -e MOONCAKE_DEVICE=mlx5_0 \
+  -e SEGMENT_SIZE=8589934592 -e BUFFER_SIZE=2147483648 \
+  -e GPU_MEM_UTIL=0.85 -e MAX_MODEL_LEN=8192 -e MOONCAKE_CONFIG_PATH=/tmp/mc_a.json \
+  -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
+  --name mc-inst-a kvcache:mooncake -lc 'bash scripts/serve_mooncake.sh'
+
+# --- on latpoc52: instance-b (GPU 0), pointing at the master on 51 ---
+# Docker needs sudo on latpoc52 (its user is not in the docker group).
+sudo docker run -d --network host --gpus all -e CUDA_VISIBLE_DEVICES=0 \
+  --cap-add=IPC_LOCK --ulimit memlock=-1 --device=/dev/infiniband \
+  -e VLLM_HOST_IP=192.168.147.152 \
+  -e MODEL=Qwen/Qwen2.5-3B-Instruct -e PORT=8001 -e BOOTSTRAP_PORT=8999 \
+  -e MASTER_ADDR=192.168.147.151:50051 \
+  -e MOONCAKE_PROTOCOL=rdma -e MOONCAKE_DEVICE=mlx5_0 \
+  -e SEGMENT_SIZE=8589934592 -e BUFFER_SIZE=2147483648 \
+  -e GPU_MEM_UTIL=0.85 -e MAX_MODEL_LEN=8192 -e MOONCAKE_CONFIG_PATH=/tmp/mc_b.json \
+  -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
+  --name mc-inst-b kvcache:mooncake -lc 'bash scripts/serve_mooncake.sh'
+
+# --- from latpoc51: drive the cold-A vs pooled-B comparison across the fabric ---
+docker run --rm --network host -v "$(pwd):/app" kvcache:mooncake -lc '
+  python3 -m bench.run_xinstance --trace /app/bench/results/trace_cmp.jsonl \
+    --model Qwen/Qwen2.5-3B-Instruct \
+    --host-a 192.168.147.151 --port-a 8000 \
+    --host-b 192.168.147.152 --port-b 8001 --settle-s 8 \
+    --out /app/bench/results/cmp_xnode_rdma.json'
+
+# teardown
+docker rm -f mc-master mc-inst-a
+ssh latpoc52 'sudo docker rm -f mc-inst-b'
+```
+
+The recorded run gave B (latpoc52) external hit rate 98.3%, TTFT p50 19.3 ms versus
+A's 26.0 ms cold, a cross-node KV load averaging 2.4 ms, and zero transfer failures
+over `mlx5_0`. The image reaches latpoc52 by `docker save kvcache:mooncake | ssh
+latpoc52 'sudo docker load'`, and the repo by `rsync`.
 
 ## Where things are
 

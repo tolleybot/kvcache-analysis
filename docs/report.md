@@ -325,7 +325,19 @@ The pooled fetch is now faster than recomputing. B's measured KV load averaged
 434 MB at GB/s rates with zero failures and GPUDirect active on `mlx5_0`. The
 cross-instance cache is a net win over RDMA. The margin is small here (a 3B model
 and a 520-token prefix), and it widens as the model, the context, and the cache
-pressure grow.
+pressure grow. (This run was single-node: both instances on one box, RDMA over the
+local NIC.)
+
+**Cross-machine (GR-1331).** The same comparison run across two physical nodes,
+instance A on `latpoc51` (192.168.147.151) and instance B on `latpoc52`
+(192.168.147.152), one A100 each, on a shared 200 Gb InfiniBand fabric, holds up.
+B pulled 98.3% of A's KV across the wire with TTFT p50 **19.3 ms** versus A's
+**26.0 ms** cold, and the cross-node KV load averaged **2.4 ms** for 434 MB with
+zero failures (RDMA over `mlx5_0`, LID and GID confirmed in the logs). So
+cross-instance reuse is a net win not only within a box but between machines, which
+is the production-shaped scenario. The raw fabric measured 169 Gb/sec node-to-node
+by `ib_write_bw`, so it is not the bottleneck; the cross-node numbers essentially
+match the single-node RDMA ones.
 
 A separate run with longer prefixes (about 3,300 tokens, roughly 120 MB of KV each)
 exposed a hard ceiling on the TCP path: large transfers exhausted ephemeral TCP
@@ -365,12 +377,12 @@ now demonstrated (Section 6.3): on a GPU-affined NIC with GPUDirect, the pooled
 fetch beats recompute. What remains is to scale it, a larger model and longer
 contexts where the margin grows, throughput at real concurrency rather than a
 single stream, and TTFT measured against the baseline at matched hit rate, so we
-separate "the cache works" from "this implementation is efficient." A cross-machine
-extension is now under way (GR-1331): a second A100 node on the same InfiniBand
-fabric, with one instance per node sharing one Store pool so KV crosses the wire
-rather than looping back on one box. The fabric is validated (169 Gb/sec
-node-to-node by `ib_write_bw`); the cross-node reuse measurement follows and will
-be recorded in Section 6.
+separate "the cache works" from "this implementation is efficient." The
+cross-machine extension is now done (GR-1331, Section 6.3): a second A100 node on
+the same InfiniBand fabric, one instance per node sharing one Store pool with KV
+crossing the wire over RDMA, reproduced the single-node win (B pooled TTFT 19.3 ms
+versus A cold 26.0 ms, 98.3% reuse, 2.4 ms cross-node load over a 169 Gb/sec
+fabric). Scaling (above) and the reliability gates are what remain.
 Then exercise the reliability gates: master loss and peer loss must degrade to
 recomputation, never to a wrong answer.
 
