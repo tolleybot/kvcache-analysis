@@ -1,5 +1,7 @@
 # Stage 3: Mooncake Store Prototype (Cross-Instance KV Reuse)
 
+> Stage 3 working detail (the Mooncake Store prototype design, recipe, and result). The consolidated investigation and results are in [`report.md`](report.md).
+
 Status: the integration works and cross-instance reuse is proven, first on the
 local development box (two co-located instances on one GPU) and then on the
 benchmark node (two instances, one per GPU, on an 8x A100 box). Both runs reached

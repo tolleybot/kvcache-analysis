@@ -1,5 +1,7 @@
 # Environment Confirmation Checklist
 
+> Stage 0 working detail (hardware and RDMA fabric gate, with the recorded nodes). The consolidated investigation and results are in [`report.md`](report.md).
+
 A Stage 0 gate. Before any Stage 3 benchmark on shared hardware counts as
 representative, we confirm the network and GPU path can move a KV block from one
 GPU's memory across the network into another GPU's memory without the CPU copying

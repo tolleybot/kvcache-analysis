@@ -1,5 +1,7 @@
 # Stage 1 Survey: Distributed KV Caching Solutions for vLLM
 
+> Stage 1 working detail (the sourced candidate survey and fact-checking method). The consolidated investigation and results are in [`report.md`](report.md).
+
 Sourced survey and comparison of distributed KV caching solutions for vLLM
 serving, current as of June 2026, scored against the Stage 0 rubric
 (`evaluation-rubric.md`). The purpose is the Stage 1 gate: choose which

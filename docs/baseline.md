@@ -1,5 +1,7 @@
 # Stage 2 Baseline: Native vLLM KV Caching
 
+> Stage 2 working detail (the native-vLLM baseline results and method). The consolidated investigation and results are in [`report.md`](report.md).
+
 The number every distributed option must beat. This records the baseline
 measurement of native vLLM prefix caching on the local development box, with
 cache hit rate reported alongside latency and throughput, per the project rubric.

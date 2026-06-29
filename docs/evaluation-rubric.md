@@ -1,5 +1,7 @@
 # Evaluation Rubric and Success Definition
 
+> Stage 0 working detail (the rubric this project is measured against). The consolidated investigation and results are in [`report.md`](report.md).
+
 Stage 0 of the project. This document defines what we are deciding, the workload
 we measure against, the metrics that count, and the weighted criteria used to
 score candidate solutions. Every later stage, the survey, the benchmark harness,

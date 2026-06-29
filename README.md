@@ -118,19 +118,30 @@ bash docker/run-server.sh        # baseline server
 bash docker/run-bench.sh         # baseline sweep
 ```
 
-## Repository map
+## Repository guide
 
-- `docs/report.md` the consolidated standalone report: investigation, comparison, and recommendation in one document (start here)
-- `docs/status-summary.md` the one-page summary for a quick read or a meeting
-- `docs/evaluation-rubric.md` the Stage 0 success definition and weighted rubric
-- `docs/environment-checklist.md` RDMA fabric questions and diagnostic commands
-- `docs/survey.md` the sourced candidate comparison and recommendation
-- `docs/baseline.md` Stage 2 baseline results and method
-- `docs/stage3.md` the Mooncake Store prototype, recipe, and result
-- `docs/runbook.md` how to run anywhere, the portable environment notes
+**Read in this order:**
+
+1. **`docs/report.md` (start here).** The consolidated standalone report: the
+   investigation, the candidate comparison, the recommendation, and all measured
+   results, single-machine and cross-machine. If you read one file, read this.
+2. **`docs/status-summary.md`.** The one-page version, for a quick read or a meeting.
+3. **`docs/runbook.md`.** How to build and run anywhere, including the multi-GPU and
+   the cross-node (two-host) RDMA recipes. Start here to reproduce the results.
+
+**Supporting detail (the staged working record that `report.md` consolidates):**
+
+- `docs/evaluation-rubric.md` Stage 0: the success definition and weighted rubric
+- `docs/environment-checklist.md` Stage 0: the hardware and RDMA fabric gate, with the recorded nodes
+- `docs/survey.md` Stage 1: the sourced candidate survey and fact-checking method
+- `docs/baseline.md` Stage 2: the native-vLLM baseline results and method
+- `docs/stage3.md` Stage 3: the Mooncake Store prototype design, recipe, and result
+
+**Code and config:**
+
 - `bench/` trace generator and benchmark harnesses, with unit tests
-- `scripts/` host-side serve, generate, sweep, stop, and Mooncake launch
-- `docker/` Dockerfile, run wrappers, and the multi-GPU Compose topology
+- `scripts/` host-side serve, generate, sweep, stop, Mooncake launch, NVLink P2P check
+- `docker/` Dockerfile, run wrappers, and the multi-GPU and RDMA Compose topologies
 - `CLAUDE.md` project conventions and contribution rules
 
 ## Continuing the work
