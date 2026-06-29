@@ -365,7 +365,12 @@ now demonstrated (Section 6.3): on a GPU-affined NIC with GPUDirect, the pooled
 fetch beats recompute. What remains is to scale it, a larger model and longer
 contexts where the margin grows, throughput at real concurrency rather than a
 single stream, and TTFT measured against the baseline at matched hit rate, so we
-separate "the cache works" from "this implementation is efficient."
+separate "the cache works" from "this implementation is efficient." A cross-machine
+extension is now under way (GR-1331): a second A100 node on the same InfiniBand
+fabric, with one instance per node sharing one Store pool so KV crosses the wire
+rather than looping back on one box. The fabric is validated (169 Gb/sec
+node-to-node by `ib_write_bw`); the cross-node reuse measurement follows and will
+be recorded in Section 6.
 Then exercise the reliability gates: master loss and peer loss must degrade to
 recomputation, never to a wrong answer.
 

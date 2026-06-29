@@ -9,14 +9,18 @@ TCP stack, and the result is a lower bound that must be labelled as such.
 
 ## Scope
 
-The immediate target is multi-GPU cross-instance reuse on a single node, one vLLM
-instance per GPU sharing one Store pool. Multi-machine reuse over a cross-node
-RDMA fabric is deferred as future work. The cross-node fabric questions below
-(dedicated fabric, GPUDirect across the network, fabric-local multi-node
-placement) therefore apply to that future phase, not to the current multi-GPU
-work, which runs within one node. The relevant transport question for a single
-node is the intra-node path between GPUs (NVLink, or RDMA loopback over a
-GPU-affined local NIC), not the inter-node fabric.
+The first target was multi-GPU cross-instance reuse on a single node, one vLLM
+instance per GPU sharing one Store pool; that is done (the single-node RDMA run in
+`report.md` Section 6.3).
+
+**UPDATE 2026-06-29: the cross-node (multi-machine) phase is now active (GR-1331).**
+A second A100 node, `latpoc52` (192.168.147.152), was allocated on the same
+InfiniBand fabric as `latpoc51` (192.168.147.151). The cross-node fabric questions
+below now apply directly rather than to a deferred phase. The fabric gate has
+passed: `ib_write_bw` between the two nodes over `mlx5_0` measured **169 Gb/sec
+average** (about 85% of the 200 Gb line rate), so cross-node RDMA is healthy. The
+remaining work is to run one vLLM instance per node sharing one Store pool with KV
+crossing the fabric, and to measure cross-node reuse latency.
 
 ## Hardware strategy
 
