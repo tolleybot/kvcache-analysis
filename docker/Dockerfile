@@ -27,9 +27,14 @@ RUN pip install --no-cache-dir -r requirements.txt -r requirements-dev.txt
 # Stage 3 only: Mooncake distributed KV cache. Off by default to keep the
 # baseline image minimal and fast to build.
 #   docker build --build-arg INSTALL_MOONCAKE=1 ...
+# The package is pinned to the cuda13 variant at >=0.3.11: the base (cu12) wheel at
+# 0.3.11 fails to import on this CUDA 13 image (libcudart.so.12, Mooncake #1298),
+# and 0.3.10 has an RDMA register_buffer bug (error -600 on buffers over ~3 GiB)
+# that segfaults LMCache's zero-copy path. 0.3.11.post1-cuda13 fixes both.
 ARG INSTALL_MOONCAKE=0
+ARG MOONCAKE_PKG=mooncake-transfer-engine-cuda13==0.3.11.post1
 RUN if [ "$INSTALL_MOONCAKE" = "1" ]; then \
-        pip install --no-cache-dir mooncake-transfer-engine; \
+        pip install --no-cache-dir "$MOONCAKE_PKG"; \
     fi
 
 # The serve scripts default *_BIN to .venv paths for the host-virtualenv flow.

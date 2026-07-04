@@ -257,6 +257,44 @@ A's 26.0 ms cold, a cross-node KV load averaging 2.4 ms, and zero transfer failu
 over `mlx5_0`. The image reaches latpoc52 by `docker save kvcache:mooncake | ssh
 latpoc52 'sudo docker load'`, and the repo by `rsync`.
 
+## LMCache over Mooncake L2 (option c head-to-head)
+
+`scripts/serve_lmcache.sh` launches a vLLM instance with `LMCacheConnectorV1` and
+Mooncake Store as LMCache's L2 remote tier, used for the comparison in `report.md`
+Section 6.4. Same master and env knobs as `serve_mooncake.sh`. Launch it exactly
+like the bare instances (host networking, IB passthrough), plus one extra
+capability:
+
+```bash
+docker run -d --network host --gpus '"device=0"' \
+  --cap-add=IPC_LOCK --cap-add=SYS_NICE --ulimit memlock=-1 --device=/dev/infiniband \
+  -e VLLM_HOST_IP=<node-ip> -e MODEL=... -e PORT=8000 \
+  -e MASTER_ADDR=<master-ip>:50051 -e MOONCAKE_PROTOCOL=rdma -e MOONCAKE_DEVICE=mlx5_0 \
+  -e SEGMENT_SIZE=8589934592 -e BUFFER_SIZE=1073741824 \
+  ... kvcache:mooncake -lc 'bash scripts/serve_lmcache.sh'
+```
+
+Hard-won gotchas, all encoded in the script or the image:
+
+- **Mooncake must be 0.3.11 or newer.** Earlier wheels have a flaky RDMA
+  `register_buffer` failure (error -600) on buffers of 4 GiB and larger, and the
+  transfer then segfaults. The image pins `mooncake-transfer-engine-cuda13`
+  0.3.11.post1 (the cuda13 variant also avoids the `libcudart.so.12` import
+  failure of the base wheel on this CUDA 13 image).
+- **`--cap-add=SYS_NICE` is required.** LMCache's NUMA path calls `mbind()`;
+  without the capability LMCache logs an init failure and silently serves with
+  zero cache hits (degraded recompute mode).
+- **`local_buffer_size` must be a real size, not 0.** The LMCache docs' Mooncake
+  example uses 0, which Mooncake rejects; LMCache does not surface the error and
+  segfaults on the first transfer.
+- **Known bug, cross-node.** On a node remote from the master, LMCache's Mooncake
+  connector fails client creation ("Client not available") and then segfaults on
+  first use, on both LMCache 0.4.5 and 0.5.0. vLLM's native `MooncakeStoreConnector`
+  works from the same node, so this blocks only the LMCache cross-machine cell.
+- **Hit-rate granularity.** LMCache reuses whole 256-token chunks and skips
+  partial chunks, so short prompts show much lower hit rates than the bare
+  connector's 16-token block keying. Judge hit rate against prompt length.
+
 ## Where things are
 
 - `docs/` evaluation rubric, candidate survey, baseline results, this runbook

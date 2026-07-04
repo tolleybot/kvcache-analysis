@@ -328,6 +328,66 @@ win is small on a 3B model with a 520-token prefix and grows with model size,
 context length, and cache pressure; quantifying that scaling, with throughput at
 real concurrency and the reliability gates, is what remains.
 
+### 6.4 LMCache head-to-head against bare Mooncake Store
+
+This measures survey option (c), LMCache as the cache-management layer with
+Mooncake Store as its L2 remote tier, against option (b), the bare
+`MooncakeStoreConnector`, on the same trace, hardware, and transport, so the
+comparison isolates what the LMCache layer adds and costs. Both run over RDMA on
+the same version stack (vLLM 0.22.0, LMCache 0.4.5, Mooncake 0.3.11.post1); the
+bare rows were re-measured after the Mooncake upgrade and match the earlier
+results. Self-measured, same cold-A versus pooled-B protocol as Section 6.3.
+
+| RDMA, same trace | B hit rate | B TTFT p50 | B TTFT mean | A cold p50 |
+| --- | --- | --- | --- | --- |
+| Bare Mooncake, single machine | 98.3% | 19.5 ms | 54 ms | 26.9 ms |
+| Bare Mooncake, cross machine | 98.3% | 20.3 ms | 55 ms | 26.1 ms |
+| LMCache over Mooncake L2, single machine | 53.4% | 25.2 ms | 363 ms | 28.1 ms |
+| LMCache over Mooncake L2, cross machine | blocked | — | — | — |
+
+Three observations, each with a mechanical explanation:
+
+- **The hit-rate gap is granularity, not correctness.** LMCache reuses full
+  256-token chunks and does not store partial chunks (`save_unfull_chunk: false`),
+  so a roughly 500-token prompt yields exactly one full-chunk hit, about 53%.
+  Bare Mooncake keys 16-token vLLM blocks and captures about 98% of the same
+  prefix. On long prompts the gap shrinks (the partial tail becomes a smaller
+  fraction); on short ones it widens.
+- **Median is competitive, tail is not.** LMCache's pooled p50 (25.2 ms) is close
+  to cold recompute, but the mean (363 ms) shows a heavy retrieval tail that bare
+  Mooncake does not have (54 ms mean). At this scale the LMCache layer costs more
+  than its partial reuse saves.
+- **The cross-machine cell is blocked by an LMCache bug.** On the node remote from
+  the master, LMCache's Mooncake connector fails to create its store client
+  ("Client not available", 20 retries), then proceeds anyway and segfaults on
+  first use. The failure was isolated precisely: vLLM's native connector works
+  from the same node, image, and master, and a standalone Mooncake client from
+  the same container also works, so the defect is in LMCache's connector
+  (reproduced on both LMCache 0.4.5 and 0.5.0). It should be reported upstream.
+
+**Operability evidence from the bring-up.** Getting LMCache to this point required
+diagnosing three stacked issues, which is itself rubric-relevant data given the
+survey scored LMCache highest on operability from its documentation: (1) Mooncake
+below 0.3.11 has a flaky RDMA `register_buffer` failure on buffers of 4 GiB and
+larger, fixed upstream, which forced the pin to `mooncake-transfer-engine-cuda13
+0.3.11.post1`; (2) LMCache's NUMA path calls `mbind()` and needs the `SYS_NICE`
+capability in containers, and without it LMCache silently degrades to recompute
+with zero hits and no surfaced error; (3) the LMCache documentation's own Mooncake
+example sets `local_buffer_size: 0`, which Mooncake rejects, and LMCache then logs
+"setup completed successfully" against an uninitialized client and segfaults on
+the first transfer. The pattern across all three is the same: LMCache absorbs
+backend failures silently and continues, which turns configuration mistakes into
+crashes or silent zero-hit runs. Bare Mooncake, by contrast, ran correctly on the
+first attempt in every topology tried.
+
+**Verdict for the recommendation.** These measurements strengthen option (b),
+bare Mooncake Store, as the primary choice: higher reuse, flatter latency, and a
+cleaner operational story on this stack. The capabilities that motivated option
+(c), the L1 tier that survives an L2 outage, Kubernetes-native deployment, and
+non-prefix reuse for retrieval-heavy workloads, were not exercised here and remain
+LMCache's case; a Production-Stack (Helm) evaluation would test them on their own
+ground. On raw cross-instance reuse over RDMA, bare Mooncake wins.
+
 ## 7. Recommendation and roadmap
 
 **Adopt in two steps, which also map onto a cheap-first hardware strategy.**

@@ -47,6 +47,13 @@ recommendation.
   ~16 MB/s, and large prefixes failed outright). Over RDMA with GPUDirect the same
   fetch dropped to about 2.9 ms (from ~3.3 s), so reuse became faster than
   recompute. The cache is a net loss over TCP and a net win over RDMA.
+- **LMCache head-to-head (Adam's ask).** With Mooncake as its remote tier on the
+  same RDMA setup, LMCache reused 53% (its 256-token chunking versus Mooncake's
+  16-token blocks on ~500-token prompts) with a competitive median but a heavy
+  latency tail, and its cross-machine cell is blocked by an LMCache connector bug
+  we isolated (vLLM's native connector works from the same node). Getting it
+  running took three fixes for issues LMCache absorbs silently. Net: bare Mooncake
+  wins on raw reuse and operability at this tier; details in `report.md` 6.4.
 
 ## What production actually uses (verified)
 
