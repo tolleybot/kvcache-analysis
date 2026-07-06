@@ -296,7 +296,12 @@ falls below A's. The win is modest here (a 3B model, a 520-token prefix) and wid
 with model size, context length, and cache pressure, the regime (Section 6.1) where
 recompute is expensive.
 
-**The GB200 rows show the same inequality from the other side.** On a single GB200
+**The GB200 rows show the same inequality from the other side.** The A100 rows left
+two questions open: whether the recommendation survives on current-generation
+hardware, where much faster prefill attacks the cache's advantage from the
+recompute side, and how our self-measured numbers relate to the vendor's published
+results, which were produced on GB200 (the vLLM Mooncake Store blog). A GB200 node
+was added to answer both. On a single GB200
 node (4x GB200, 186 GB each, driver 580, CUDA 13 native, aarch64 Grace CPUs;
 transport is RDMA over 200 Gb RoCE on `mlx5_2`, since this box's InfiniBand ports
 are down), the KV load is the fastest measured (about 1.6 ms at the short-prefix
