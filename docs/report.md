@@ -4,8 +4,7 @@ A standalone report on what distributed KV caching solutions are available for
 large language model inference serving, how they compare, and which to adopt. It
 consolidates the staged work in this repository (the evaluation rubric, the
 sourced survey, the baseline measurement, and the cross-instance prototype) into
-a single document, and it calls out the points most likely to interest a machine
-learning group. The detailed working docs remain in `docs/` for reproduction and
+a single document. The detailed working docs remain in `docs/` for reproduction and
 sources; this report is meant to be read on its own.
 
 Status as of June 2026: the survey and recommendation are complete, the native
@@ -201,36 +200,40 @@ performance column is directional until our own cluster numbers land.
 
 ## 6. Measured evidence
 
-Two measurements from this project anchor the recommendation. State the exact
-environment with every number, since absolute values depend on hardware.
+Two measurements from this project anchor the recommendation, the cross-instance
+prototype (Section 6.2) and the transport comparison (Section 6.3); a development-box
+mechanism check (Section 6.1) supports the motivation but is not itself a
+production result. State the exact environment with every number, since absolute
+values depend on hardware.
 
-### 6.1 Baseline: native vLLM prefix caching
+### 6.1 Mechanism check: the capacity effect (development box, supporting)
 
-This establishes the capacity effect that motivates a pool, and it confirms the
-harness measures hit rate correctly.
+Before the cluster work, the capacity effect that motivates a pool was confirmed on
+a development box, which also validated that the harness measures hit rate
+correctly. This is a supporting check, not a production baseline: the hardware is a
+12 GB consumer GPU, so only the relative effect transfers and absolute latencies are
+not reported here. A synthetic agentic, multi-turn trace was run with the
+shared-prefix fraction swept across 0, 50, and 90 percent under two cache sizings,
+ample and constrained (the constrained size forces eviction). The full environment
+and method are in `docs/baseline.md`.
 
-- **Environment.** NVIDIA GeForce RTX 5070, 12 GB, vLLM 0.22.0, Qwen2.5-3B-Instruct
-  in bf16, greedy decoding, single instance, local only. A development-tier box;
-  relative effects transfer, absolute latencies do not.
-- **Method.** A synthetic agentic, multi-turn trace (16 sessions, 4 turns each, a
-  shared system prompt, round-robin interleaving) with the shared-prefix fraction
-  swept across 0, 50, and 90 percent. Two cache sizings isolate capacity: ample
-  (about 99,440 tokens) and constrained (4,096 tokens, forcing eviction).
+| Shared prefix | Hit rate, ample | Hit rate, constrained |
+| --- | --- | --- |
+| 0% | 68.6% | 0.0% |
+| 50% | 76.5% | 30.6% |
+| 90% | 90.4% | 61.5% |
 
-| Shared prefix | Hit rate, ample | Hit rate, constrained | TTFT mean, ample (ms) | TTFT mean, constrained (ms) |
-| --- | --- | --- | --- | --- |
-| 0% | 68.6% | 0.0% | 32.1 | 72.5 |
-| 50% | 76.5% | 30.6% | 26.8 | 53.5 |
-| 90% | 90.4% | 61.5% | 22.1 | 36.0 |
-
-The reading: hit rate tracks prefix sharing as designed, within-session reuse is
-significant on its own (68.6% even at 0 percent cross-session sharing), and
-shrinking the cache collapses the hit rate while roughly doubling TTFT. The gap
-between the constrained and ample columns is the prize a distributed pool exists
-to recover. Throughput and end to end latency barely move at this scale because,
-with a small model, short outputs, and concurrency one, total latency is dominated
-by decode rather than prefill; the throughput effect grows with larger models,
-longer prompts, and higher concurrency.
+Hit rate is the signal, because it is a property of the workload and the cache
+sizing rather than of the GPU. Shrinking the cache below the working set collapses
+the hit rate to zero and roughly doubles TTFT; that collapse, not any absolute
+number, is the point, and it is the empirical basis for the
+capacity-versus-working-set argument a distributed pool exists to serve. The
+within-session reuse still visible at 0 percent cross-session sharing (68.6%)
+confirms the harness captures reuse as designed. Throughput and end to end latency
+barely move at this scale because, with a small model, short outputs, and
+concurrency one, total latency is decode-bound; the effect on throughput grows with
+larger models, longer prompts, and higher concurrency. The on-axis production
+baseline on A100/GB200 hardware remains work (Section 8).
 
 ### 6.2 Prototype: Mooncake Store cross-instance reuse
 
@@ -489,80 +492,7 @@ fabric). Scaling (above) and the reliability gates are what remain.
 Then exercise the reliability gates: master loss and peer loss must degrade to
 recomputation, never to a wrong answer.
 
-## 8. Details of interest to a machine learning group
-
-The points below are where this systems work touches modeling, training-adjacent
-concerns, and experiment design, and they are the ones a machine learning group
-will care about most.
-
-- **Reuse is bit-exact, so output quality is unchanged.** This is not approximate
-  or lossy caching. A block is reused only when a content hash over its token ids
-  and the entire preceding prefix matches, so the reused KV is identical to what
-  recomputation would produce. Under greedy decoding the outputs are
-  byte-for-byte identical with and without the cache. The quality question is
-  therefore moot, the only risk is a keying bug, which is exactly why the
-  correctness invariant is a hard gate rather than a metric.
-
-- **Hit rate is the lever, and prompt structure controls it.** Every downstream
-  gain is bounded by the fraction of prompt tokens served from cache. That
-  fraction is a property of the workload, not the hardware, and it is something a
-  model or product team can engineer. Stable, shared system prompts placed at the
-  front, consistent tool and few-shot ordering, and append-only conversation
-  histories all raise the hit rate. Reordering or templating that perturbs an
-  early token invalidates every block after it, since the hash chains forward.
-
-- **Caching is block-level, not token-level.** KV is keyed and stored per fixed
-  block of tokens (16 in vLLM by default). Reuse happens at block granularity, so
-  a divergence inside a block costs the whole block, and block size trades hit
-  granularity against per-block metadata and transfer overhead. This is worth
-  knowing when reasoning about why a near-identical prompt got a lower hit rate
-  than expected.
-
-- **Where the savings land depends on the regime.** Prefill reuse most directly
-  cuts time to first token. At low concurrency with short outputs, total latency
-  is decode-bound and the win shows up almost entirely in TTFT, which is why the
-  baseline's throughput barely moved. With larger models, longer prompts, and
-  higher concurrency, prefill is a larger share of the work and the saved
-  computation converts into throughput and capacity. Experiment design should
-  match the regime to the claim being made.
-
-- **KV cache size scales with architecture, and that sets the transfer budget.**
-  Cache size grows with layers, number of key and value heads, head dimension,
-  sequence length, and dtype. Grouped-query and multi-query attention shrink it
-  substantially by sharing key and value heads, and fp8 or other KV quantization
-  halves or quarters it again. Smaller KV per token means more fits in the pool
-  and less moves on a hit, so architecture choices directly change the economics
-  of distributed caching. A quantized KV cache also raises a quality question that
-  exact-reuse prefix caching does not, and the two should not be conflated.
-
-- **Determinism is a hard requirement across instances.** Because keys are
-  content hashes seeded per process, two instances only agree if their hash seed
-  agrees. In practice this means pinning `PYTHONHASHSEED` identically everywhere.
-  More generally, anything that makes block hashing nondeterministic across
-  instances silently defeats cross-instance reuse without raising an error, so it
-  is a thing to watch when reproducing or scaling experiments.
-
-- **Cross-instance reuse decouples routing from cache locality.** Once the pool is
-  shared, any instance can serve any session and still find its prefix, which
-  removes the need for sticky session routing and enables prefill and decode
-  disaggregation. For a research team this is the structural difference from
-  local offload: the cache stops being a per-replica resource and becomes a
-  cluster-wide one.
-
-- **Non-prefix reuse is relevant to retrieval-augmented generation.** LMCache can
-  reuse KV for any repeated span, not only a shared prefix. In a RAG setting the
-  same document chunks recur across requests in different positions, where
-  prefix-only caching misses them. This is a capability difference worth weighing
-  if the workload is retrieval-heavy rather than purely conversational.
-
-- **Capacity versus working set is the whole argument.** The baseline shows that
-  when the working set exceeds the per-instance cache, eviction drives the hit
-  rate to zero under interleaved load. A distributed pool gives a larger effective
-  cache than any single instance can hold, so the relevant quantity is the ratio
-  of aggregate pool capacity to the working set of active prefixes, not the
-  per-GPU cache size.
-
-## 9. Caveats and open questions
+## 8. Caveats and open questions
 
 - **Vendor performance numbers are not independently reproduced.** Published
   speedups for Mooncake Store and LMCache are vendor-reported, and the exact
@@ -574,11 +504,16 @@ will care about most.
   is proven, but representative latency and throughput require RDMA (the Store does
   not accept NVLink, see Section 6.3), a larger model, and real concurrency.
 
-- **Baseline and prototype ran on different hardware.** The baseline is from a
-  12 GB consumer GPU and the prototype from 8x A100, so the two are not directly
-  comparable in absolute terms. The baseline establishes the capacity effect; the
-  prototype establishes the cross-instance mechanism. A re-baseline on the A100
-  node is the clean way to put both on one axis.
+- **The comparison baseline is the same-hardware cold-A control, not a separate
+  run.** Every verdict in Sections 6.3 and 6.4 measures instance B's pooled path
+  against instance A serving the same trace cold with an empty pool (full prefill,
+  zero reuse) on the same GPU, transport, and trace. That cold-A number is the
+  native-recompute baseline the pooled path must beat, so the comparisons are
+  internal and hardware-consistent; no cross-hardware comparison is made. The
+  demoted dev-box run (Section 6.1) motivates the capacity effect only and is not a
+  comparison anchor. What remains is a native-local-caching baseline at a matched
+  hit rate (Section 7), which would separate "the distributed cache works" from
+  "the distributed path is more efficient than native local reuse."
 
 - **The Mooncake Store HA master gap is real.** High-availability failover depends
   on ETCD today, with a Kubernetes-native path still open. This is the most
@@ -589,7 +524,7 @@ will care about most.
 - **Scope.** This evaluation targets vLLM and, in its current phase, single-node
   multi-GPU reuse. Multi-machine reuse over a cross-node RDMA fabric is deferred.
 
-## 10. Primary sources
+## 9. Primary sources
 
 - vLLM Mooncake Store integration PR: https://github.com/vllm-project/vllm/pull/40900
 - vLLM Mooncake Store blog: https://vllm.ai/blog/2026-05-06-mooncake-store

@@ -125,8 +125,12 @@ bash docker/run-bench.sh         # baseline sweep
 1. **`docs/report.md` (start here).** The consolidated standalone report: the
    investigation, the candidate comparison, the recommendation, and all measured
    results, single-machine and cross-machine. If you read one file, read this.
-2. **`docs/status-summary.md`.** The one-page version, for a quick read or a meeting.
-3. **`docs/runbook.md`.** How to build and run anywhere, including the multi-GPU and
+2. **`docs/results-brief.md`.** A self-contained results brief: just the Mooncake
+   Store and LMCache test results on production hardware (A100 and GB200), with no
+   survey, rubric, or development-box numbers. For a reader who wants the measured
+   outcomes without the full investigation.
+3. **`docs/status-summary.md`.** The one-page version, for a quick read or a meeting.
+4. **`docs/runbook.md`.** How to build and run anywhere, including the multi-GPU and
    the cross-node (two-host) RDMA recipes. Start here to reproduce the results.
 
 **Supporting detail (the staged working record that `report.md` consolidates):**
