@@ -1,6 +1,6 @@
 # Distributed KV Cache on Production Hardware: Mooncake Store and LMCache Results
 
-A self-contained results brief. It reports what our own tests of distributed KV
+A self-contained results brief. It reports what my own tests of distributed KV
 caching measured on production-grade GPUs (A100 and GB200), for two cache-management
 layers on vLLM: Mooncake Store through the native `KVConnector`, and LMCache with
 Mooncake Store as its remote tier. It excludes the development-box work and the
@@ -19,29 +19,38 @@ instance reuses anything locally and all reuse is genuinely cross-instance. The
 primary metric is time to first token (TTFT) at p50, reported next to the
 cross-instance hit rate.
 
+A few conditions were measured in more than one run, because the tables below were
+produced for different comparisons: bare Mooncake appears in both the transport
+comparison and the LMCache head-to-head, and the GB200 short-prefix point appears in
+both the transport table and the length sweep. Where the same condition recurs, the
+figures come from independent runs and differ only by run-to-run variance of about a
+millisecond; they are not meant to be identical.
+
 **Environments.**
 
 | Label | Hardware | Transport | Software |
 | --- | --- | --- | --- |
 | A100 single node | 8x A100-SXM4-80GB, NVLink, driver 570.86.15 | RDMA over InfiniBand, and TCP for contrast | vLLM 0.22.0, Mooncake 0.3.11.post1 |
 | A100 cross node | 2 nodes, 1x A100 each, 200 Gb InfiniBand (169 Gb/s measured) | RDMA over InfiniBand (`mlx5_0`) | vLLM 0.22.0, Mooncake 0.3.11.post1 |
-| GB200 single node | 4x GB200, 186 GB each, driver 580, CUDA 13, Grace (aarch64) | RDMA over 200 Gb RoCE (`mlx5_2`; the box's IB ports are down) | vLLM 0.22.0, Mooncake 0.3.11.post1 |
+| GB200 single node | 4x GB200, 186 GB each, driver 580, CUDA 13, Grace (aarch64) | RDMA over 200 Gb RoCE (`mlx5_2`; the box's IB ports are unavailable) | vLLM 0.22.0, Mooncake 0.3.11.post1 |
 
-Models are Qwen2.5-3B-Instruct unless a row says 32B. LMCache rows add LMCache 0.4.5.
+Models are Qwen2.5-3B-Instruct unless a row says 32B, which is Qwen2.5-32B-Instruct.
+LMCache rows add LMCache 0.4.5.
 
 ## Mooncake Store: cross-instance reuse
 
-**Reuse is correct everywhere.** Across every condition below the cross-instance hit
-rate is 98.3% and no transfer ever failed. The mechanism works; the open question is
-whether fetching cached KV is cheaper than recomputing it, which is purely a
-transport and hardware question.
+**Reuse is correct everywhere.** Across every condition in the table below the
+cross-instance hit rate is 98.3% and no transfer failed (the TCP failure on larger
+prefixes, noted after the table, is a separate and more demanding run). The mechanism
+works; the open question is whether fetching cached KV is cheaper than recomputing it,
+which is purely a transport and hardware question.
 
 | Condition | B hit rate | KV load (avg) | B pooled TTFT p50 | A cold TTFT p50 | Outcome |
 | --- | --- | --- | --- | --- | --- |
 | A100, single node, TCP | 98.3% | ~3,358 ms | 1,843 ms | 38.9 ms | net loss, ~47x slower |
 | A100, single node, RDMA (IB) | 98.3% | ~2.9 ms | **19.5 ms** | 26.9 ms | **net win** |
 | A100, cross node, RDMA (IB) | 98.3% | ~2.4 ms | **19.3 ms** | 26.0 ms | **net win** |
-| GB200, single node, RDMA (RoCE) | 98.3% | ~1.6 ms | 18.4 ms | 15.6 ms | p50 break-even; mean 21 vs 42 ms |
+| GB200, single node, RDMA (RoCE) | 98.3% | ~1.6 ms | 18.4 ms | 15.6 ms | p50 break-even; mean 21 ms pooled vs 42 ms cold |
 
 The reuse rate is identical across rows; only the transport and the GPU generation
 change the verdict. Over TCP the KV load averaged about 3.3 seconds for tens of
@@ -50,6 +59,14 @@ is a net loss. Over RDMA with GPUDirect the same load drops to a few millisecond
 the fetch beats recompute and B's TTFT falls below A's. The win holds across two
 physical machines on the InfiniBand fabric, which is the production-shaped scenario;
 the cross-node fabric measured 169 Gb/s and is not the bottleneck.
+
+Two notes on reading the table. The KV-load column is a mean while the TTFT columns
+are medians, so on the TCP row the mean load (about 3.3 s) exceeds the median pooled
+TTFT (1.8 s): a heavy tail of slow transfers lifts the mean above the median request.
+And cold-A varies by row because instance A also writes its KV into the pool as it
+serves, so its TTFT is not strictly transport-independent; over TCP the slow write
+path is the likely reason its cold figure (38.9 ms) exceeds the RDMA rows (about
+27 ms).
 
 **TCP has a hard ceiling beyond small prefixes.** A separate run with longer prefixes
 (about 3,300 tokens, roughly 120 MB of KV each) exhausted ephemeral TCP ports on the
@@ -62,7 +79,7 @@ not a viable transport for a real deployment. RDMA is not optional.
 The A100 win is real but small (a 3B model, a 520-token prefix), and it left two
 questions the A100 could not answer. First, does the recommendation survive on
 current-generation hardware, where much faster prefill attacks the cache's advantage
-from the recompute side? Second, how do our numbers relate to the vendor's published
+from the recompute side? Second, how do my numbers relate to the vendor's published
 GB200 results? A GB200 node was added to answer both, and because Blackwell prefill
 is so fast that the crossover point is no longer obvious, I measured it directly
 instead of asserting it.
@@ -85,7 +102,7 @@ on Blackwell. The relative win peaks at mid-length prefixes and narrows again by
 linearly more KV per request, so on this fast GPU and this fabric the two costs
 converge again at long prefixes.
 
-**Model size, measured (GB200, Qwen2.5-32B).** The claim that the win grows with
+**Model size, measured (GB200, Qwen2.5-32B-Instruct).** The claim that the win grows with
 model size was the last axis still asserted rather than measured, so the 2K and 8K
 points were repeated at 32B, a production-plausible serving size.
 
@@ -145,8 +162,9 @@ enterprise-operability requirements.
 
 ## Bottom line
 
-Cross-instance reuse through Mooncake Store is correct (98.3% reuse) and, over RDMA
-with GPUDirect, faster than recomputing. It does not pay over TCP, which is a
+Cross-instance reuse through Mooncake Store is correct (98.3% reuse at short prefixes,
+rising to 99.9% at multi-thousand-token prefixes) and, over RDMA with GPUDirect,
+faster than recomputing. It does not pay over TCP, which is a
 correctness transport only and fails outright on large prefixes. On current-generation
 Blackwell the pool pays at the median above roughly 500 to 2,000 shared tokens, and
 the margin grows with model size, reaching about 3.3x at 32B with 8,000-token
