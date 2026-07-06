@@ -280,19 +280,39 @@ sits on a second node, changes between rows.
 
 | Condition | B hit rate | KV load (avg) | B pooled TTFT p50 | A cold TTFT p50 | Outcome |
 | --- | --- | --- | --- | --- | --- |
-| Single machine, TCP | 98.3% | ~3,358 ms | 1,843 ms | 38.9 ms | net loss, ~47x slower |
-| Single machine, RDMA | 98.3% | ~2.9 ms | **19.5 ms** | 26.9 ms | **net win** |
-| Cross machine (two nodes), RDMA | 98.3% | ~2.4 ms | **19.3 ms** | 26.0 ms | **net win** |
+| A100, single machine, TCP | 98.3% | ~3,358 ms | 1,843 ms | 38.9 ms | net loss, ~47x slower |
+| A100, single machine, RDMA (IB) | 98.3% | ~2.9 ms | **19.5 ms** | 26.9 ms | **net win** |
+| A100, cross machine, RDMA (IB) | 98.3% | ~2.4 ms | **19.3 ms** | 26.0 ms | **net win** |
+| GB200, single machine, RDMA (RoCE) | 98.3% | ~1.6 ms | 18.4 ms | 15.6 ms | p50 break-even; mean 21 vs 42 ms |
 
 The reuse rate is identical (98.3%) and no transfer ever failed; only the transport
-changes the verdict. A cache helps only when fetching cached KV is cheaper than
-recomputing it. Over TCP the KV load averaged about 3.3 seconds for tens of
-megabytes (an effective ~16 MB/s), far slower than recomputing a ~520-token prefix
-on an A100 (~39 ms), so the inequality is inverted and the cache is a net loss. Over
-RDMA with GPUDirect the same load drops to ~2.9 ms (moving 434 MB at GB/s rates), so
-the fetch beats recompute and B's time to first token falls below A's. The win is
-modest here (a 3B model, a 520-token prefix) and widens with model size, context
-length, and cache pressure, the regime (Section 6.1) where recompute is expensive.
+and the GPU generation change the verdict. A cache helps only when fetching cached
+KV is cheaper than recomputing it. Over TCP the KV load averaged about 3.3 seconds
+for tens of megabytes (an effective ~16 MB/s), far slower than recomputing a
+~520-token prefix on an A100 (~39 ms), so the inequality is inverted and the cache
+is a net loss. Over RDMA with GPUDirect the same load drops to ~2.9 ms (moving
+434 MB at GB/s rates), so the fetch beats recompute and B's time to first token
+falls below A's. The win is modest here (a 3B model, a 520-token prefix) and widens
+with model size, context length, and cache pressure, the regime (Section 6.1) where
+recompute is expensive.
+
+**The GB200 row shows the same inequality from the other side.** On a single GB200
+node (4x GB200, 186 GB each, driver 580, CUDA 13 native, aarch64 Grace CPUs;
+transport is RDMA over 200 Gb RoCE on `mlx5_2`, since this box's InfiniBand ports
+are down), the KV load is the fastest measured (about 1.6 ms), yet the p50 verdict
+is roughly break-even: Blackwell prefills the ~520-token prefix in ~15.6 ms, so
+recompute is nearly free at this scale and the pooled fetch (18.4 ms p50) no longer
+undercuts it, although the mean still favors the pool two to one (21 vs 42 ms,
+since cold prefill has a heavier tail). The faster the GPU, the larger the model or
+context must be before cross-instance caching pays at the median, which is the
+"expensive recompute" axis measured rather than argued. Environment notes for this
+row: it ran on a host virtualenv rather than Docker, because every aarch64 Mooncake
+wheel requires glibc 2.39 (Ubuntu 24.04) while the vLLM v0.22.0 arm64 image is
+Ubuntu 22.04 (glibc 2.35), an incompatibility recorded in the runbook; and
+`nvidia_peermem` still ships with driver 580 and must be loaded, without it the
+RDMA registration of GPU memory fails ("Bad address") and every transfer fails,
+yielding a 0% external hit rate with both instances otherwise healthy. Same vLLM
+0.22.0, Mooncake 0.3.11.post1, trace, and protocol as the other rows.
 
 **Transport notes.** RDMA is the transport the Mooncake Transfer Engine exists to
 use, and production deployments use GPUDirect RDMA even within a single node (the

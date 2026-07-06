@@ -50,6 +50,7 @@ Version" is the maximum the driver supports).
 | Hardware | Arch | Notes |
 | --- | --- | --- |
 | 8x A100-SXM4-80GB (`latpoc51`, benchmark tier in use) | Ampere sm_80 | Driver 570 (max CUDA 12.8). The stock `v0.22.0` image (CUDA 13 build) runs as-is through CUDA forward compatibility, verified by a kernel launch, so no tag override is needed. The base `mooncake-transfer-engine` wheel works. No FlashInfer workaround needed. |
+| 4x GB200 (`nvl-gpu2`, 192.168.156.102) | Blackwell sm_100, **aarch64** Grace | Driver 580, CUDA 13 native, Ubuntu 24.04. **Docker does not work for Mooncake here**: every aarch64 `mooncake-transfer-engine-cuda13` wheel is `manylinux_2_39` (glibc 2.39) while the vLLM v0.22.0 arm64 image is Ubuntu 22.04 (glibc 2.35), so no compatible wheel installs in-container. Use the host virtualenv flow instead (vLLM 0.22.0 has an aarch64 wheel). `nvidia_peermem` ships with driver 580 and **must be modprobed**, else RDMA registration of GPU memory fails ("Bad address") and all transfers fail with 0% hits. RDMA runs over 200 Gb RoCE (`mlx5_2/3/6/7` Active Ethernet); this box's IB ports are down. |
 | RTX 5070 (local dev) | Blackwell sm_120 | Needs CUDA 13 (driver 595 here). Requires the FlashInfer sampler workaround below. |
 | V100 (cluster) | Volta sm_70 | Broadly supported; older drivers may need a CUDA 12.x image tag. |
 | H200 (cluster) | Hopper sm_90 | Well supported; match the tag to the node driver. |

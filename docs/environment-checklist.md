@@ -97,6 +97,21 @@ Implications:
   (`scripts/check_nvlink_p2p.py`). The `nvlink_intra` rejection noted above is a
   Mooncake Store build limitation, not a hardware one; the NVLink path itself is
   healthy.
+
+### GB200 node, recorded
+
+Captured on `nvl-gpu2` (192.168.156.102), used for the single-machine GB200 row in
+`report.md` Section 6.3:
+
+| Property | Value |
+| --- | --- |
+| GPU | 4x NVIDIA GB200, 186 GB each, fully NVLink-connected (NV18) |
+| CPU / RAM | aarch64 Grace, 144 cores, 1.7 TB RAM |
+| Driver / CUDA | 580.126.20 / CUDA 13.0 native |
+| OS / kernel | Ubuntu 24.04, 6.17.0-nvidia-64k (64 KiB pages) |
+| RDMA | 200 Gb RoCE Ethernet Active on mlx5_2/3/6/7; InfiniBand ports Down |
+| GPUDirect | `nvidia_peermem` ships with driver 580; must be modprobed (required) |
+| Runtime | host virtualenv, not Docker (aarch64 wheel needs glibc 2.39, arm64 image is 2.35) |
 - The dedicated InfiniBand fabric here is what a future multi-machine phase would
   use; it is not required for the current single-node multi-GPU work.
 
