@@ -327,7 +327,27 @@ RoCE costs nearly as much as recomputing them on this GPU. On slower fabrics or
 bigger models that balance shifts again; per-point transfer telemetry was not
 captured in the sweep (the periodic KV-transfer log did not fire within the short
 runs), so the volume figures are computed from the KV size per token, not
-measured. Environment notes for these rows: they ran on a host virtualenv rather
+measured.
+
+**Model size, measured (Qwen2.5-32B).** The claim that the win grows with model
+size was the one axis still asserted rather than measured, so the 2K and 8K points
+were repeated on the same node with Qwen2.5-32B-Instruct (a production-plausible
+serving size; one instance per 186 GB GPU, same traces, pool segment raised to
+64 GiB and the staging buffer to 8 GiB for the roughly 262 KB-per-token KV):
+
+| Shared-prefix length | Model | A cold p50 | B pooled p50 | Verdict at p50 |
+| --- | --- | --- | --- | --- |
+| ~2,000 tokens | 3B | 43.9 | 24.6 | pool ~1.8x |
+| ~2,000 tokens | 32B | 91.8 | **44.4** | pool ~2.1x |
+| ~8,000 tokens | 3B | 59.8 | 56.5 | pool marginal |
+| ~8,000 tokens | 32B | 348.3 | **104.9** | **pool ~3.3x** |
+
+The 8K narrowing seen at 3B reverses completely at 32B: prefill compute grows
+faster with model size than KV volume does, so the pooled fetch wins by the
+largest margin in this investigation, about 243 ms saved per request at the
+median (99.9% reuse, mean 361 versus 108 ms). This is the regime a distributed
+pool is actually deployed for, a real model size with long shared prefixes, and
+it is where the mechanism pays most decisively. Environment notes for these rows: they ran on a host virtualenv rather
 than Docker, because every aarch64 Mooncake wheel requires glibc 2.39 (Ubuntu
 24.04) while the vLLM v0.22.0 arm64 image is Ubuntu 22.04 (glibc 2.35), an
 incompatibility recorded in the runbook; and `nvidia_peermem` still ships with
