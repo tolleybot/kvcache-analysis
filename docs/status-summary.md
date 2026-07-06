@@ -54,6 +54,14 @@ recommendation.
   we isolated (vLLM's native connector works from the same node). Getting it
   running took three fixes for issues LMCache absorbs silently. Net: bare Mooncake
   wins on raw reuse and operability at this tier; details in `report.md` 6.4.
+- **GB200 and model size (Adam's ask).** On a GB200 node the same test showed the
+  flip side: Blackwell prefills a short prompt so fast that caching only breaks
+  even there, and a prefix sweep put the crossover at roughly 500 to 2,000 shared
+  tokens. Repeating the long-prefix points with a 32B model settled the model-size
+  question: at 8,000 shared tokens the pool cuts median time to first token from
+  348 ms to 105 ms, a 3.3x win at 99.9% reuse, the strongest result in the
+  investigation and the production-shaped configuration (real model size, long
+  shared prompts). Details in `report.md` 6.3.
 
 ## What production actually uses (verified)
 
