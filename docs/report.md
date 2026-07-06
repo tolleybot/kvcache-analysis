@@ -288,8 +288,9 @@ sits on a second node, changes between rows.
 | A100, cross machine, RDMA (IB) | 98.3% | ~2.4 ms | **19.3 ms** | 26.0 ms | **net win** |
 | GB200, single machine, RDMA (RoCE) | 98.3% | ~1.6 ms | 18.4 ms | 15.6 ms | p50 break-even; mean 21 vs 42 ms |
 
-The reuse rate is identical (98.3%) and no transfer ever failed; only the transport
-and the GPU generation change the verdict. A cache helps only when fetching cached
+The reuse rate is identical (98.3%) and no transfer failed in any of these
+conditions (the longer-prefix TCP failure that exhausts ephemeral ports is described
+later in this section); only the transport and the GPU generation change the verdict. A cache helps only when fetching cached
 KV is cheaper than recomputing it. Over TCP the KV load averaged about 3.3 seconds
 for tens of megabytes (an effective ~16 MB/s), far slower than recomputing a
 ~520-token prefix on an A100 (~39 ms), so the inequality is inverted and the cache
@@ -298,6 +299,14 @@ is a net loss. Over RDMA with GPUDirect the same load drops to ~2.9 ms (moving
 falls below A's. The win is modest here (a 3B model, a 520-token prefix) and widens
 with model size, context length, and cache pressure, the regime (Section 6.1) where
 recompute is expensive.
+
+Two notes on reading the table. The KV-load column is a mean while the TTFT columns
+are medians, so on the TCP row the mean load (~3,358 ms) exceeds the median pooled
+TTFT (1,843 ms): a heavy tail of slow transfers lifts the mean above the median
+request. And the cold-A figure is not strictly transport-independent, because
+instance A also writes its computed KV into the pool as it serves; over TCP the slow
+write path is the likely reason A's cold TTFT (38.9 ms) exceeds the RDMA rows
+(~27 ms), even though A pays full prefill in every row.
 
 **The GB200 rows show the same inequality from the other side.** The A100 rows left
 two questions open: whether the recommendation survives on current-generation
