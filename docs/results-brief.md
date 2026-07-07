@@ -3,8 +3,7 @@
 A self-contained results brief. It reports what my own tests of distributed KV
 caching measured on production-grade GPUs (A100 and GB200), for two cache-management
 layers on vLLM: Mooncake Store through the native `KVConnector`, and LMCache with
-Mooncake Store as its remote tier. It excludes the development-box work and the
-candidate survey; those are in `report.md`. Every number here is self-measured.
+Mooncake Store as its remote tier. Every number here is self-measured.
 
 ## What was tested, and how to read the numbers
 
@@ -41,9 +40,14 @@ LMCache rows add LMCache 0.4.5.
 
 **Reuse is correct everywhere.** Across every condition in the table below the
 cross-instance hit rate is 98.3% and no transfer failed (the TCP failure on larger
-prefixes, noted after the table, is a separate and more demanding run). The mechanism
-works; the open question is whether fetching cached KV is cheaper than recomputing it,
-which is purely a transport and hardware question.
+prefixes, noted after the table, is a separate and more demanding run). The rate is
+98.3% rather than 100%, even with identical prompts, because vLLM caches whole
+16-token blocks and always recomputes at least the final block, which cannot be
+served from cache since generation needs the last position. That is a fixed loss of
+roughly one block per request, so it shrinks as prefixes lengthen and the hit rate
+climbs to 99.9% at 8,000 tokens in the sweep below. The mechanism works; the open
+question is whether fetching cached KV is cheaper than recomputing it, which is
+purely a transport and hardware question.
 
 | Condition | B hit rate | KV load (avg) | B pooled TTFT p50 | A cold TTFT p50 | Outcome |
 | --- | --- | --- | --- | --- | --- |
@@ -66,7 +70,10 @@ TTFT (1.8 s): a heavy tail of slow transfers lifts the mean above the median req
 And cold-A varies by row because instance A also writes its KV into the pool as it
 serves, so its TTFT is not strictly transport-independent; over TCP the slow write
 path is the likely reason its cold figure (38.9 ms) exceeds the RDMA rows (about
-27 ms).
+27 ms). Over RDMA the write is cheap (the KV load itself is about 2.9 ms), so cold-A
+there is close to pure recompute and the write overhead is not a material cost on the
+recommended transport; the visible inflation is a TCP artifact, and TCP is not
+recommended.
 
 **TCP has a hard ceiling beyond small prefixes.** A separate run with longer prefixes
 (about 3,300 tokens, roughly 120 MB of KV each) exhausted ephemeral TCP ports on the
