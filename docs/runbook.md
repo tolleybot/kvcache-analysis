@@ -296,6 +296,49 @@ Hard-won gotchas, all encoded in the script or the image:
   partial chunks, so short prompts show much lower hit rates than the bare
   connector's 16-token block keying. Judge hit rate against prompt length.
 
+## GLM-5.2-FP8 on the H200 pair (production-scale test)
+
+Environment: `latpoc32` (192.168.147.132) and `latpoc34` (192.168.147.134), 8x
+H200 141 GB each, driver 580.126.20, Ubuntu 24.04, no root, no Docker, host
+virtualenv only. Four IB links between them (`mlx5_2/3/4/7`), measured 390 Gb/s
+by `ib_write_bw` on `mlx5_2`. Shared VAST storage at `/mnt/llm` on both nodes
+holds one copy of the ~750 GB checkpoint (`HF_HOME=/mnt/llm/donaldt/hf-cache`).
+Stack: vLLM 0.24.0 (GLM-5.2 needs >= 0.23), `mooncake-transfer-engine-cuda13
+0.3.11.post1`. One TP8 instance per node (`TP=8`, supported by
+`serve_mooncake.sh`), master on latpoc32, `MOONCAKE_PROTOCOL=rdma
+MOONCAKE_DEVICE=mlx5_2`, `SEGMENT_SIZE=34359738368 BUFFER_SIZE=4294967296`.
+
+**FP8 models on driver-only hosts: the five-layer toolchain fix.** vLLM's FP8
+path (DeepGEMM and flashinfer) JIT-compiles kernels at startup, and a bare host
+venv has no CUDA toolkit. Worse, torch's `nvidia/cu13` pip bundle is internally
+version-mixed (headers 13.0, nvcc 13.2, nvvm 13.2, crt 13.3), which fails CCCL's
+compatibility check and then mismatches PTX versions. The working recipe, all
+without root:
+
+1. Align the toolchain to the bundle's header version (13.0):
+   `pip install nvidia-cuda-nvcc==13.0.88 nvidia-nvvm==13.0.88 nvidia-cuda-crt==13.0.88`
+   (these overlay the mixed components in `site-packages/nvidia/cu13`). Do NOT
+   install `nvidia-cuda-nvcc-cu13`, which is an unrelated 0.0.1 stub package.
+2. Create the unversioned dev symlinks the linkers need (`libcudart.so`,
+   `libnvrtc.so`, etc.: for every `lib*.so.N` under `site-packages/nvidia/*/lib`,
+   symlink `lib*.so`), plus `ln -s lib site-packages/nvidia/cu13/lib64`.
+3. Export at launch: `CUDA_HOME=<venv>/site-packages/nvidia/cu13`,
+   `PATH=$CUDA_HOME/bin:$PATH`, `LIBRARY_PATH=$CUDA_HOME/lib`.
+4. After any failed attempt, clear the JIT caches (`~/.cache/vllm/deep_gemm`,
+   `~/.cache/flashinfer`); they retain poisoned state.
+5. `VLLM_USE_DEEP_GEMM=0` does not help: the checkpoint's quant config overrides
+   it.
+
+Symptoms these fix, in order encountered: `std::filesystem::exists(nvcc_path)`
+assertion; `#error CUDA compiler and CUDA toolkit headers are incompatible`;
+`ptxas fatal: Unsupported .version 9.2`; `ld: cannot find -lcudart`; `ld: cannot
+find -lnvrtc`.
+
+Also required on the vLLM 0.24 stack: `nvidia_peermem` loaded (present on these
+nodes), and note that short probe prompts do not produce store writes (saves are
+block-granular); verify the write path with a 500+ token prompt against the
+master's `Keys:` count. Results are in `report.md` Section 6.5.
+
 ## Where things are
 
 - `docs/` evaluation rubric, candidate survey, baseline results, this runbook

@@ -468,6 +468,53 @@ non-prefix reuse for retrieval-heavy workloads, were not exercised here and rema
 LMCache's case; a Production-Stack (Helm) evaluation would test them on their own
 ground. On raw cross-instance reuse over RDMA, bare Mooncake wins.
 
+### 6.5 Production scale: GLM-5.2-FP8 (753B) across two H200 nodes
+
+The final measurement takes the methodology to a frontier-scale model, per a
+stakeholder request: **GLM-5.2** (Zhipu's 753B-parameter MoE, 39B active) in its
+official **FP8** quantization, the configuration its own serving recipe targets.
+This required new hardware: FP8 weights alone are ~750 GB per serving instance,
+so each instance runs tensor-parallel across all eight GPUs of an H200 node
+(`latpoc32`/`latpoc34`, 8x H200 141 GB each, ConnectX at 400 Gb; node-to-node
+`ib_write_bw` measured 390 Gb/s), one instance per node, one Mooncake pool over
+RDMA on `mlx5_2`. The stack moved to vLLM 0.24.0 (GLM-5.2 requires >= 0.23), so a
+Qwen2.5-32B control point was re-run on the same stack to bridge the version bump.
+Same cold-A versus pooled-B protocol and traces as the GB200 sweep; the pool
+carried a few smoke-test entries (~90 MB, disjoint prompts) at the start of the
+run, which cannot produce false hits.
+
+| Model / point (cross-machine RDMA) | B hit rate | A cold p50 | B pooled p50 | Speedup |
+| --- | --- | --- | --- | --- |
+| Qwen2.5-32B, ~8K (control, H200, vLLM 0.24) | 99.9% | 714.1 ms | **107.5 ms** | **6.6x** |
+| GLM-5.2-FP8, ~2K | 97.8% | 175.5 ms | **67.2 ms** | **2.6x** |
+| GLM-5.2-FP8, ~8K | 99.4% | 672.2 ms | **162.9 ms** | **4.1x** |
+
+Verification: instance B pulled **24.7 GB** of GLM KV across the fabric (4,160
+keys, zero failed keys, zero errors, no TCP fallback; RDMA on `mlx5_2` confirmed
+in the transfer logs), at about 5.5 GB/s effective on the batched loads. GLM-5.2's
+KV runs at roughly 80 KB per token in this deployment, about twice Qwen-32B's, so
+the 8K point moves ~650 MB per request.
+
+Three conclusions. First, **the model-size trend completes**: at ~8K shared
+tokens the pool's median win grows 3B (marginal) to 32B (3.3x on GB200) to
+**753B-FP8 (4.1x, about half a second saved per request)**. Prefill compute keeps
+growing faster than KV volume, so the production-shaped configuration, a frontier
+model with long shared prompts, is where the pool pays most. Second, **FP8
+quantization coexists cleanly with the pool**: the connector stores and reuses
+the FP8 model's KV (which remains bf16) at a 99.4% hit rate with no correctness
+caveats beyond those of FP8 itself. Third, **the control row shows the pool path
+is stable across stack versions**: B's pooled TTFT for Qwen-32B/8K is ~105 ms on
+GB200/vLLM 0.22 and ~108 ms on H200/vLLM 0.24, with only the cold-prefill side
+varying by GPU generation, which is exactly what the fetch-versus-recompute model
+predicts.
+
+Operability note: standing this up on driver-only hosts (no root, no Docker, no
+system CUDA toolkit) surfaced a chain of five distinct toolchain defects in the
+FP8 serving path, from a missing runtime compiler to internally version-mixed
+NVIDIA pip components; the full diagnosis and the working recipe are recorded in
+the runbook. None are Mooncake issues, but they are real deployment friction for
+FP8 models on bare hosts.
+
 ## 7. Recommendation and roadmap
 
 **Adopt in two steps, which also map onto a cheap-first hardware strategy.**

@@ -112,6 +112,21 @@ Captured on `nvl-gpu2` (192.168.156.102), used for the single-machine GB200 row 
 | RDMA | 200 Gb RoCE Ethernet Active on mlx5_2/3/6/7; InfiniBand ports Down |
 | GPUDirect | `nvidia_peermem` ships with driver 580; must be modprobed (required) |
 | Runtime | host virtualenv, not Docker (aarch64 wheel needs glibc 2.39, arm64 image is 2.35) |
+
+### H200 pair, recorded
+
+Captured on `latpoc32` (192.168.147.132) and `latpoc34` (192.168.147.134), used
+for the GLM-5.2-FP8 production-scale rows in `report.md` Section 6.5:
+
+| Property | Value |
+| --- | --- |
+| GPU | 8x NVIDIA H200 141 GB per node (x86_64) |
+| Driver / CUDA | 580.126.20 / CUDA 13.0 on both |
+| Fabric | 4 IB links between nodes (mlx5_2/3/4/7), 390 Gb/s measured on mlx5_2 |
+| GPUDirect | `nvidia_peermem` loaded on both |
+| Storage | 24 TB NVMe arrays (/mnt/md0, /mnt/md1) + shared VAST at /mnt/llm (holds the model cache used by both nodes) |
+| Access | no root, no Docker; host virtualenv flow with the FP8 toolchain recipe from the runbook |
+| Note | a third box, latpoc33 at .133, is NOT part of the allocation (driver 570, belongs to another project) |
 - The dedicated InfiniBand fabric here is what a future multi-machine phase would
   use; it is not required for the current single-node multi-GPU work.
 

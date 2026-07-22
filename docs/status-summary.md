@@ -59,9 +59,15 @@ recommendation.
   even there, and a prefix sweep put the crossover at roughly 500 to 2,000 shared
   tokens. Repeating the long-prefix points with a 32B model settled the model-size
   question: at 8,000 shared tokens the pool cuts median time to first token from
-  348 ms to 105 ms, a 3.3x win at 99.9% reuse, the strongest result in the
-  investigation and the production-shaped configuration (real model size, long
-  shared prompts). Details in `report.md` 6.3.
+  348 ms to 105 ms, a 3.3x win at 99.9% reuse. Details in `report.md` 6.3.
+- **GLM-5.2-FP8 at 753B (Jonathan's ask).** The methodology scaled to a frontier
+  model: GLM-5.2 in official FP8, one tensor-parallel instance per 8x H200 node,
+  sharing one pool across a 390 Gb/s fabric. At 8,000 shared tokens the pool cut
+  median time to first token from 672 ms to 163 ms, a **4.1x win at 99.4% reuse**,
+  with 24.7 GB of KV crossing the wire without a single failed transfer. The
+  model-size trend completes: 3B marginal, 32B 3.3x, 753B 4.1x. FP8 coexists
+  cleanly with the pool. Details in `report.md` 6.5; the bare-host FP8 deployment
+  recipe (five toolchain fixes) is in the runbook.
 
 ## What production actually uses (verified)
 

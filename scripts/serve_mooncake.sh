@@ -70,7 +70,11 @@ EXTRA_ARGS=()
 # time. Useful when co-locating two instances on one GPU for a local test.
 [[ "${ENFORCE_EAGER:-0}" == "1" ]] && EXTRA_ARGS+=(--enforce-eager)
 
-echo "Serving $MODEL on :$PORT (kv_role=$KV_ROLE, protocol=$MOONCAKE_PROTOCOL)"
+# Tensor parallelism for models larger than one GPU (e.g. GLM-5.2-FP8 at TP=8).
+TP="${TP:-1}"
+[[ "$TP" != "1" ]] && EXTRA_ARGS+=(--tensor-parallel-size "$TP")
+
+echo "Serving $MODEL on :$PORT (kv_role=$KV_ROLE, protocol=$MOONCAKE_PROTOCOL, tp=$TP)"
 exec "$VLLM_BIN" serve "$MODEL" \
   --port "$PORT" \
   --gpu-memory-utilization "$GPU_MEM_UTIL" \
