@@ -1,9 +1,12 @@
 # Distributed KV Cache on Production Hardware: Mooncake Store and LMCache Results
 
 A self-contained results brief. It reports what my own tests of distributed KV
-caching measured on production-grade GPUs (A100 and GB200), for two cache-management
-layers on vLLM: Mooncake Store through the native `KVConnector`, and LMCache with
-Mooncake Store as its remote tier. Every number here is self-measured.
+caching measured on production-grade GPUs (A100, GB200, and H200), for two
+cache-management layers on vLLM: Mooncake Store through the native `KVConnector`,
+and LMCache with Mooncake Store as its remote tier. Every number here is
+self-measured. The final section takes the same test to a frontier-scale model,
+GLM-5.2 at 753B parameters in FP8, served tensor-parallel across two 8x H200
+nodes.
 
 ## What was tested, and how to read the numbers
 
@@ -32,9 +35,12 @@ millisecond; they are not meant to be identical.
 | A100 single node | 8x A100-SXM4-80GB, NVLink, driver 570.86.15 | RDMA over InfiniBand, and TCP for contrast | vLLM 0.22.0, Mooncake 0.3.11.post1 |
 | A100 cross node | 2 nodes, 1x A100 each, 200 Gb InfiniBand (169 Gb/s measured) | RDMA over InfiniBand (`mlx5_0`) | vLLM 0.22.0, Mooncake 0.3.11.post1 |
 | GB200 single node | 4x GB200, 186 GB each, driver 580, CUDA 13, Grace (aarch64) | RDMA over 200 Gb RoCE (`mlx5_2`; the box's IB ports are unavailable) | vLLM 0.22.0, Mooncake 0.3.11.post1 |
+| H200 cross node | 2 nodes, 8x H200 141 GB each, driver 580; 390 Gb/s measured between nodes | RDMA over InfiniBand (`mlx5_2`) | vLLM 0.24.0, Mooncake 0.3.11.post1 |
 
-Models are Qwen2.5-3B-Instruct unless a row says 32B, which is Qwen2.5-32B-Instruct.
-LMCache rows add LMCache 0.4.5.
+Models are Qwen2.5-3B-Instruct unless a row says 32B (Qwen2.5-32B-Instruct) or
+GLM-5.2-FP8 (zai-org's official FP8 release of the 753B MoE). LMCache rows add
+LMCache 0.4.5. The H200 rows use vLLM 0.24.0 because GLM-5.2 requires at least
+0.23; a Qwen-32B control on that stack bridges the version change.
 
 ## Mooncake Store: cross-instance reuse
 
@@ -127,6 +133,42 @@ reuse, mean 361 versus 108 ms). This is the regime a distributed pool is actuall
 deployed for, a real model size with long shared prefixes, and it is where the
 mechanism pays most decisively.
 
+## Frontier scale: GLM-5.2-FP8 across two H200 nodes
+
+The requesting team asked whether the result holds for GLM-5.2 with FP8
+quantization, which stresses the methodology in three new ways at once: a
+frontier-scale model (753B-parameter MoE, 39B active), FP8-quantized weights,
+and tensor parallelism, since the ~750 GB FP8 checkpoint needs all eight GPUs of
+an H200 node per serving instance. One instance ran per node, sharing one pool
+over a measured 390 Gb/s InfiniBand fabric. Same protocol and traces as the
+GB200 sweep. A Qwen-32B control row ties the new vLLM 0.24 stack back to the
+earlier tables.
+
+| Model / point (H200 cross node, RDMA) | B hit rate | A cold p50 | B pooled p50 | Verdict at p50 |
+| --- | --- | --- | --- | --- |
+| Qwen2.5-32B, ~8K (control) | 99.9% | 714.1 | **107.5** | pool ~6.6x |
+| GLM-5.2-FP8, ~2K | 97.8% | 175.5 | **67.2** | pool ~2.6x |
+| GLM-5.2-FP8, ~8K | 99.4% | 672.2 | **162.9** | **pool ~4.1x** |
+
+Instance B pulled 24.7 GB of GLM KV across the fabric with zero failed transfers
+(GLM-5.2's KV runs at roughly 80 KB per token here, about twice Qwen-32B's, so
+the 8K point moves ~650 MB per request). Three things follow. The model-size
+trend completes: at ~8K shared tokens the pool's median win grows from marginal
+at 3B, to ~3.3x at 32B, to **~4.1x at 753B-FP8, about half a second saved per
+request**. FP8 coexists cleanly with the pool: the quantized model's KV (still
+bf16) stores and reuses at 99.4% with no additional caveats. And the control row
+shows the pooled path is stable across stacks and GPUs: pooled TTFT for
+Qwen-32B/8K is ~105 ms on GB200/vLLM 0.22 and ~108 ms on H200/vLLM 0.24, with
+only the cold-recompute side varying by GPU generation, exactly as the
+fetch-versus-recompute framing predicts.
+
+One deployment caveat worth knowing: vLLM's FP8 path JIT-compiles GPU kernels at
+startup, and on driver-only hosts (no root, no Docker, no system CUDA toolkit)
+this failed five distinct ways before serving, traced to internally
+version-mixed NVIDIA components in the Python packaging. None of it is a
+Mooncake issue, and the working recipe is recorded in the project runbook, but
+FP8-at-scale carries real toolchain friction that bf16 serving does not.
+
 ## LMCache over Mooncake versus bare Mooncake Store
 
 This compares LMCache as the cache-management layer, with Mooncake Store as its L2
@@ -174,8 +216,10 @@ rising to 99.9% at multi-thousand-token prefixes) and, over RDMA with GPUDirect,
 faster than recomputing. It does not pay over TCP, which is a
 correctness transport only and fails outright on large prefixes. On current-generation
 Blackwell the pool pays at the median above roughly 500 to 2,000 shared tokens, and
-the margin grows with model size, reaching about 3.3x at 32B with 8,000-token
-prefixes, the regime a distributed pool is deployed for. Bare Mooncake Store is the
+the margin grows with model size: about 3.3x at 32B, and **about 4.1x for GLM-5.2 at
+753B in FP8 across two H200 nodes, roughly half a second saved per request at
+8,000-token prefixes**, the regime a distributed pool is deployed for. FP8
+quantization coexists cleanly with the pool. Bare Mooncake Store is the
 stronger primary choice on this stack; LMCache's extra layer cost more than its
 partial reuse saved here, and its distinctive capabilities remain to be evaluated on
 their own ground.
