@@ -19,6 +19,16 @@ the Stage 3 Mooncake Store prototype has proven cross-instance reuse locally; th
 cluster tier is next. The repository is the single source of truth, since tooling
 memory does not travel with a clone.
 
+## Active tracks
+
+- **GR-1331, distributed KV caching (vLLM + Mooncake).** Delivered 2026-08-03. Report in
+  `docs/report.md`. **Treat the report and `kvcache-results.pdf` as delivered artifacts and
+  do not edit them.** New findings go in new documents that reference them.
+- **SGLang radix caching research.** Scoped 2026-08-24, not started. Design in
+  `docs/sglang-radix-research.md`. **Read that before doing any SGLang work**, since it
+  defines the goal, the three outcomes that end the project, and what is out of scope.
+  Rules specific to it are under "Working notes" below.
+
 ## Background: what a KV caching solution is
 
 During transformer inference, the attention mechanism computes a key and a value vector for every token in the context. These key/value tensors are cached so that already-processed tokens are not recomputed on each step. This store is the KV cache. Inference splits into a prefill phase, which computes the KV cache for the whole prompt at once, and a decode phase, which generates one token at a time and reuses the cached KV rather than reprocessing the prompt.
@@ -84,6 +94,21 @@ These are starting defaults for a fresh repo. Confirm and update this section on
 
 - Benchmarks must report the cache hit rate alongside throughput, TTFT, and end-to-end latency. Hit rate is the variable that drives the rest, so a result without it is not interpretable.
 - Keep claims about external projects sourced. Link the PR, doc, or commit rather than paraphrasing from memory, since this space moves quickly.
+
+### SGLang track
+
+- **Do not compare raw TTFT across engines and call it a cache result.** SGLang and vLLM
+  differ in scheduling, batching, and attention kernels, so a latency delta does not isolate
+  the cache. Hit rate under controlled prefix overlap is the defensible metric.
+- **Benchmark only on the GR-1331 hardware and models**, or the numbers will not be readable
+  against the published ones. A100 `192.168.147.151`; H200 pair `latpoc32` / `latpoc34`.
+  Models Qwen2.5-3B, Qwen2.5-32B, GLM-5.2-FP8. Workloads from `docs/baseline.md`.
+- **Confirm SGLang architecture against current source, not memory.** It moves quickly, and
+  the HiCache remote tier is exactly the kind of thing that changes between releases.
+- **Write the Stage 1 architecture findings down before touching hardware.** That read is the
+  deliverable, not a warm-up for benchmarking.
+- Expect the two GR-1331 gotchas to recur: `PYTHONHASHSEED` must match across instances, and
+  the CUDA build must match the host driver. Find the SGLang equivalents early.
 
 ## Coding Rules
 
